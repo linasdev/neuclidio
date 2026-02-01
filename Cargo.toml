@@ -1,0 +1,40 @@
+[package]
+name = "neuclidio"
+version = "0.1.0"
+authors = ["Linas Nikiperavičius <linas@linasdev.com>"]
+edition = "2024"
+description = "Non-euclidean geometry game engine"
+repository = "https://github.com/linasdev/neuclidio"
+readme = "README.md"
+license = "MIT"
+
+[dependencies.breadx]
+version = "3.1.0"
+optional = true
+
+[features]
+default = [
+    "platform-all",
+    "display-protocol-all",
+]
+
+platform-linux = []
+platform-all = [
+    "platform-linux",
+]
+
+display-protocol-x11 = [
+    "platform-linux",
+    "dep:breadx",
+]
+display-protocol-all = [
+    "display-protocol-x11",
+]
+
+[[example]]
+name = "window_open"
+path = "examples/window_open.rs"
+
+[[example]]
+name = "window_close"
+path = "examples/window_close.rs"
