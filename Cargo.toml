@@ -8,28 +8,18 @@ repository = "https://github.com/linasdev/neuclidio"
 readme = "README.md"
 license = "MIT"
 
-[dependencies.breadx]
-version = "3.1.0"
-optional = true
+[dependencies]
+log = "0.4.29"
+bus = "2.4.1"
+
+[dependencies.winit]
+version = "0.30.12"
+
+[dev-dependencies]
+env_logger = "0.11.8"
 
 [features]
-default = [
-    "platform-all",
-    "display-protocol-all",
-]
-
-platform-linux = []
-platform-all = [
-    "platform-linux",
-]
-
-display-protocol-x11 = [
-    "platform-linux",
-    "dep:breadx",
-]
-display-protocol-all = [
-    "display-protocol-x11",
-]
+default = []
 
 [[example]]
 name = "window_open"

@@ -1,18 +1,27 @@
-use neuclidio::windowing::backend::{WindowingBackendTrait, get_available_windowing_backend};
-use neuclidio::windowing::config::WindowConfig;
+use neuclidio::engine::NeuclidioEngineBuilder;
+use neuclidio::event::NeuclidioEvent;
+use winit::window::WindowAttributes;
 
 fn main() {
-    let mut windowing_backend =
-        get_available_windowing_backend().expect("Failed to get available windowing backend");
+    env_logger::init();
 
-    let window_config = WindowConfig::default();
-    windowing_backend
-        .open(&window_config)
-        .expect("Failed to open window");
+    let mut neuclidio = NeuclidioEngineBuilder::default()
+        .build()
+        .expect("Failed to build neuclidio engine");
 
-    loop {
-        windowing_backend
-            .poll_event()
-            .expect("Failed to poll for window events");
-    }
+    let thread = neuclidio.thread(|mut proxy| {
+        let window_attributes = WindowAttributes::default();
+        proxy
+            .add_window_blocking(window_attributes)
+            .expect("Failed to add window");
+
+        while let Ok(event) = proxy.poll_for_event() {
+            if let Some(NeuclidioEvent::WindowClosed(_)) = event {
+                proxy.exit();
+            }
+        }
+    });
+
+    neuclidio.run().expect("Failed to run neuclidio engine");
+    thread.join().expect("Failed to join with game thread");
 }
