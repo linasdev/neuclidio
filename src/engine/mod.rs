@@ -9,7 +9,7 @@ use log::{error, info, warn};
 use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 pub mod proxy;
@@ -148,9 +148,11 @@ impl NeuclidioEngineBuilder {
 
     pub fn build(self) -> Result<NeuclidioEngine, NeuclidioError> {
         let event_bus = Bus::new(self.event_bus_size.unwrap_or(DEFAULT_EVENT_BUS_SIZE));
+
         let event_loop = EventLoop::with_user_event()
             .build()
             .map_err(NeuclidioWindowingError::from)?;
+        event_loop.set_control_flow(ControlFlow::Poll);
 
         Ok(NeuclidioEngine {
             event_bus,
