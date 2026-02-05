@@ -1,23 +1,25 @@
 use crate::engine::proxy::NeuclidioEngineProxy;
+use crate::engine::render::NeuclidioRenderEngine;
+use crate::engine::render::windowing::error::NeuclidioWindowingError;
 use crate::engine::thread::NeuclidioEngineThread;
-use crate::error::NeuclidioError;
+use crate::error::NeuclidioResult;
 use crate::event::NeuclidioEvent;
-use crate::windowing::error::NeuclidioWindowingError;
-use crate::windowing::event::NeuclidioWindowingEvent;
 use bus::Bus;
 use log::{error, info, warn};
+use render::windowing::event::NeuclidioWindowingEvent;
 use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
+pub mod builder;
 pub mod proxy;
+pub mod render;
 pub mod thread;
 
-const DEFAULT_EVENT_BUS_SIZE: usize = 64;
-
 pub struct NeuclidioEngine {
+    render_engine: NeuclidioRenderEngine,
     event_bus: Bus<NeuclidioEvent>,
     event_loop: EventLoop<NeuclidioWindowingEvent>,
 }
@@ -36,9 +38,10 @@ impl NeuclidioEngine {
         NeuclidioEngineThread::new(self.proxy(), f)
     }
 
-    pub fn run(self) -> Result<(), NeuclidioError> {
+    pub fn run(self) -> NeuclidioResult<()> {
         self.event_loop
             .run_app(&mut NeuclidioEngineApp {
+                render_engine: self.render_engine,
                 event_bus: self.event_bus,
                 windows: HashMap::new(),
             })
@@ -49,6 +52,7 @@ impl NeuclidioEngine {
 }
 
 struct NeuclidioEngineApp {
+    render_engine: NeuclidioRenderEngine,
     event_bus: Bus<NeuclidioEvent>,
     windows: HashMap<WindowId, Window>,
 }
@@ -59,12 +63,34 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NeuclidioWindowingEvent) {
         match event {
             NeuclidioWindowingEvent::ExitEventLoop => event_loop.exit(),
-            NeuclidioWindowingEvent::AddWindow(window_attributes, result_sender) => {
+            NeuclidioWindowingEvent::AddWindow(mut window_attributes, result_sender) => {
+                if window_attributes.title.as_str() == "winit window" {
+                    window_attributes = window_attributes.with_title("Neuclidio Example");
+                }
+
                 match event_loop.create_window(window_attributes) {
                     Ok(window) => {
                         let window_id = window.id();
-                        self.windows.insert(window_id, window);
                         info!("Added window with id: {:?}", window_id);
+
+                        match self.render_engine.prepare_for_window(&window) {
+                            Ok(_) => {
+                                info!(
+                                    "Prepared Vulkan instance for window with id: {:?}",
+                                    window_id
+                                );
+                            }
+                            Err(err) => {
+                                error!("Failed to prepare Vulkan instance for window: {:?}", err);
+
+                                if let Err(_) = result_sender.send(Err(err)) {
+                                    error!("Failed to send result across windowing event channel");
+                                }
+                                return;
+                            }
+                        }
+
+                        self.windows.insert(window_id, window);
 
                         let value = Ok(window_id);
                         if let Err(_) = result_sender.send(value) {
@@ -84,6 +110,8 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
             NeuclidioWindowingEvent::CloseWindow(window_id, result_sender) => {
                 match self.windows.remove(&window_id) {
                     Some(window) => {
+                        self.render_engine.clean_up_for_window(window_id);
+
                         drop(window);
                         info!("Closed window with id: {:?}", window_id);
 
@@ -113,50 +141,45 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
     ) {
         match event {
             WindowEvent::CloseRequested => {
+                self.render_engine.clean_up_for_window(window_id);
                 self.windows.remove(&window_id);
-                info!(
-                    "Closed window (due to user request) with id: {:?}",
-                    window_id
-                );
+                info!("Closed window (due to user request) with id: {window_id:?}");
 
                 self.event_bus
                     .broadcast(NeuclidioEvent::WindowClosed(window_id));
             }
+            WindowEvent::Resized(new_window_size) => match self.windows.get(&window_id) {
+                Some(window) => {
+                    if let Err(err) = self
+                        .render_engine
+                        .handle_window_change(window, new_window_size)
+                    {
+                        warn!(
+                            "Failed to handle window change for window with id '{window_id:?}' with error: {err:?}"
+                        );
+                        return;
+                    }
+                }
+                None => {
+                    warn!("Can't find window by id '{window_id:?}' when processing window event")
+                }
+            },
             WindowEvent::RedrawRequested => match self.windows.get(&window_id) {
                 Some(window) => {
+                    if let Err(err) = self.render_engine.render_on_window(window) {
+                        warn!(
+                            "Failed to render on window with id '{window_id:?}' with error: {err:?}"
+                        );
+                        return;
+                    }
+
                     window.request_redraw();
                 }
-                None => warn!(
-                    "Can't find window by id '{:?}' when processing window event",
-                    window_id
-                ),
+                None => {
+                    warn!("Can't find window by id '{window_id:?}' when processing window event")
+                }
             },
             _ => {}
         }
-    }
-}
-
-#[derive(Default)]
-pub struct NeuclidioEngineBuilder {
-    event_bus_size: Option<usize>,
-}
-
-impl NeuclidioEngineBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn build(self) -> Result<NeuclidioEngine, NeuclidioError> {
-        let event_bus = Bus::new(self.event_bus_size.unwrap_or(DEFAULT_EVENT_BUS_SIZE));
-
-        let event_loop = EventLoop::with_user_event()
-            .build()
-            .map_err(NeuclidioWindowingError::from)?;
-        event_loop.set_control_flow(ControlFlow::Poll);
-
-        Ok(NeuclidioEngine {
-            event_bus,
-            event_loop,
-        })
     }
 }

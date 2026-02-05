@@ -1,9 +1,7 @@
-use crate::error::NeuclidioError;
+use crate::engine::render::windowing::error::NeuclidioWindowingError;
+use crate::engine::render::windowing::event::*;
+use crate::error::{NeuclidioError, NeuclidioResult};
 use crate::event::NeuclidioEvent;
-use crate::windowing::error::NeuclidioWindowingError;
-use crate::windowing::event::{
-    NeuclidioAddWindowResult, NeuclidioCloseWindowResult, NeuclidioWindowingEvent,
-};
 use bus::BusReader;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -26,7 +24,7 @@ impl NeuclidioEngineProxy {
         }
     }
 
-    pub fn poll_for_event(&mut self) -> Result<Option<NeuclidioEvent>, NeuclidioError> {
+    pub fn poll_for_event(&mut self) -> NeuclidioResult<Option<NeuclidioEvent>> {
         match self.event_bus_reader.try_recv() {
             Ok(event) => Ok(Some(event)),
             Err(TryRecvError::Empty) => Ok(None),
@@ -43,7 +41,7 @@ impl NeuclidioEngineProxy {
     pub fn add_window(
         &self,
         window_attributes: WindowAttributes,
-    ) -> Result<Receiver<NeuclidioAddWindowResult>, NeuclidioError> {
+    ) -> NeuclidioResult<Receiver<NeuclidioAddWindowResult>> {
         let (sender, receiver) = mpsc::channel();
         self.event_loop_proxy
             .send_event(NeuclidioWindowingEvent::AddWindow(
@@ -67,7 +65,7 @@ impl NeuclidioEngineProxy {
     pub fn close_window(
         &self,
         window_id: WindowId,
-    ) -> Result<Receiver<NeuclidioCloseWindowResult>, NeuclidioError> {
+    ) -> NeuclidioResult<Receiver<NeuclidioCloseWindowResult>> {
         let (sender, receiver) = mpsc::channel();
         self.event_loop_proxy
             .send_event(NeuclidioWindowingEvent::CloseWindow(window_id, sender))

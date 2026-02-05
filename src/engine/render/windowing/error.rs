@@ -1,4 +1,4 @@
-use crate::windowing::event::NeuclidioWindowingEvent;
+use crate::engine::render::windowing::event::NeuclidioWindowingEvent;
 use winit::error::{EventLoopError, OsError};
 use winit::event_loop::EventLoopClosed;
 

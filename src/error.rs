@@ -1,13 +1,15 @@
-use crate::windowing::error::NeuclidioWindowingError;
+use crate::engine::render::error::NeuclidioRenderError;
+
+pub type NeuclidioResult<T> = Result<T, NeuclidioError>;
 
 #[derive(Debug)]
 pub enum NeuclidioError {
     EventBusClosed,
-    WindowingError(NeuclidioWindowingError),
+    RenderError(NeuclidioRenderError),
 }
 
-impl From<NeuclidioWindowingError> for NeuclidioError {
-    fn from(value: NeuclidioWindowingError) -> Self {
-        Self::WindowingError(value)
+impl From<NeuclidioRenderError> for NeuclidioError {
+    fn from(value: NeuclidioRenderError) -> Self {
+        Self::RenderError(value)
     }
 }

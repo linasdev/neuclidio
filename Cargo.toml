@@ -7,13 +7,18 @@ description = "Non-euclidean geometry game engine"
 repository = "https://github.com/linasdev/neuclidio"
 readme = "README.md"
 license = "MIT"
+exclude = ["/shaders"]
 
 [dependencies]
 log = "0.4.29"
+itertools = "0.14.0"
 bus = "2.4.1"
+winit = "0.30.12"
+libloading = "0.8.9"
 
-[dependencies.winit]
-version = "0.30.12"
+[dependencies.vulkanalia]
+version = "0.34.0"
+features = ["libloading", "window", "provisional"]
 
 [dev-dependencies]
 env_logger = "0.11.8"
@@ -22,9 +27,5 @@ env_logger = "0.11.8"
 default = []
 
 [[example]]
-name = "window_open"
-path = "examples/window_open.rs"
-
-[[example]]
-name = "window_close"
-path = "examples/window_close.rs"
+name = "triangle"
+path = "examples/triangle.rs"

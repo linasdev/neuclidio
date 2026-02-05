@@ -1,11 +1,11 @@
-use neuclidio::engine::NeuclidioEngineBuilder;
+use neuclidio::engine::builder::NeuclidioEngineBuilder;
 use neuclidio::event::NeuclidioEvent;
 use winit::window::WindowAttributes;
 
 fn main() {
     env_logger::init();
 
-    let mut neuclidio = NeuclidioEngineBuilder::default()
+    let mut neuclidio = NeuclidioEngineBuilder::new()
         .build()
         .expect("Failed to build neuclidio engine");
 
