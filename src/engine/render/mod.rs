@@ -1,6 +1,5 @@
 use crate::engine::render::windowing::window_manager::NeuclidioRenderEngineWindowManager;
 use crate::error::NeuclidioResult;
-use winit::dpi::PhysicalSize;
 use winit::window::{Window, WindowId};
 
 pub mod builder;
@@ -26,13 +25,8 @@ impl NeuclidioRenderEngine {
         self.window_manager.render_on_window(window)
     }
 
-    pub(crate) fn handle_window_change(
-        &mut self,
-        window: &Window,
-        new_window_size: PhysicalSize<u32>,
-    ) -> NeuclidioResult<()> {
-        self.window_manager
-            .handle_window_change(window, Some(new_window_size))
+    pub(crate) fn handle_window_change(&mut self, window: &Window) -> NeuclidioResult<()> {
+        self.window_manager.handle_window_change(window)
     }
 
     pub(crate) fn clean_up_for_window(&mut self, window_id: WindowId) {

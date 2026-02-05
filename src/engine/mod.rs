@@ -148,12 +148,9 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
                 self.event_bus
                     .broadcast(NeuclidioEvent::WindowClosed(window_id));
             }
-            WindowEvent::Resized(new_window_size) => match self.windows.get(&window_id) {
+            WindowEvent::Resized(_) => match self.windows.get(&window_id) {
                 Some(window) => {
-                    if let Err(err) = self
-                        .render_engine
-                        .handle_window_change(window, new_window_size)
-                    {
+                    if let Err(err) = self.render_engine.handle_window_change(window) {
                         warn!(
                             "Failed to handle window change for window with id '{window_id:?}' with error: {err:?}"
                         );

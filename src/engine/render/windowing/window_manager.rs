@@ -15,7 +15,6 @@ use vulkanalia::vk::{
 };
 use vulkanalia::{Device, window as vk_window};
 use vulkanalia::{Entry, Instance, Version, vk};
-use winit::dpi::PhysicalSize;
 use winit::window::{Window, WindowId};
 
 /// Whether the validation layers should be enabled.
@@ -115,7 +114,7 @@ impl NeuclidioRenderEngineWindowManager {
         match neuclidio_window.render() {
             Ok(_) => {}
             Err(NeuclidioError::RenderError(NeuclidioRenderError::OutOfDateSwapChain)) => {
-                self.handle_window_change(window, None)?;
+                self.handle_window_change(window)?;
                 return Ok(());
             }
             Err(err) => return Err(err),
@@ -124,19 +123,8 @@ impl NeuclidioRenderEngineWindowManager {
         Ok(())
     }
 
-    pub fn handle_window_change(
-        &mut self,
-        window: &Window,
-        new_window_size: Option<PhysicalSize<u32>>,
-    ) -> NeuclidioResult<()> {
+    pub fn handle_window_change(&mut self, window: &Window) -> NeuclidioResult<()> {
         let window_id = window.id();
-
-        if let Some(new_window_size) = new_window_size
-            && (new_window_size.width == 0 || new_window_size.height == 0)
-        {
-            debug!("Window with id '{window_id:?}' was minimized");
-            return Ok(());
-        }
 
         let neuclidio_window = match self.windows.get_mut(&window_id) {
             Some(window_data) => window_data,
