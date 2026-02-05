@@ -111,6 +111,10 @@ impl NeuclidioRenderEngineWindowManager {
             }
         };
 
+        if let Some(true) = window.is_minimized() {
+            return Ok(());
+        }
+
         match neuclidio_window.render() {
             Ok(_) => {}
             Err(NeuclidioError::RenderError(NeuclidioRenderError::OutOfDateSwapChain)) => {
