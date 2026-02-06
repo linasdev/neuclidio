@@ -555,6 +555,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74a4d85559e2637d3d839438b5b3d75c31e655276f9544d72475c36b92fabbed"
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -777,10 +783,12 @@ version = "0.1.0"
 dependencies = [
  "bus",
  "env_logger",
+ "glam",
  "itertools",
  "libloading",
  "log",
  "vulkanalia",
+ "vulkanalia-vma",
  "winit",
 ]
 
@@ -1555,6 +1563,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e09d7a84fabf69939d58b472eac8dfff624b8ce408c82de0f9fa60be401930e"
 dependencies = [
  "bitflags 1.3.2",
+]
+
+[[package]]
+name = "vulkanalia-vma"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9275bd80a849d9e24ebd0d156f03319555d0ca0123368b6ee6f7b8ac9576c7d4"
+dependencies = [
+ "bitflags 2.10.0",
+ "cc",
+ "vulkanalia",
 ]
 
 [[package]]

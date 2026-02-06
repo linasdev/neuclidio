@@ -110,7 +110,12 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
             NeuclidioWindowingEvent::CloseWindow(window_id, result_sender) => {
                 match self.windows.remove(&window_id) {
                     Some(window) => {
-                        self.render_engine.clean_up_for_window(window_id);
+                        if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
+                            warn!(
+                                "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
+                            );
+                            return;
+                        }
 
                         drop(window);
                         info!("Closed window with id: {:?}", window_id);
@@ -141,7 +146,12 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                self.render_engine.clean_up_for_window(window_id);
+                if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
+                    warn!(
+                        "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
+                    );
+                    return;
+                }
                 self.windows.remove(&window_id);
                 info!("Closed window (due to user request) with id: {window_id:?}");
 

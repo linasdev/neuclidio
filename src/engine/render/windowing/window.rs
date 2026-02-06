@@ -1,11 +1,9 @@
-use crate::engine::render::pipeline::NeuclidioRenderPipeline;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
-use crate::error::NeuclidioResult;
-use log::{debug, warn};
+use log::debug;
 use vulkanalia::vk::{
     DeviceV1_0, ExtDebugUtilsExtensionInstanceCommands, InstanceV1_0,
-    KhrSurfaceExtensionInstanceCommands, KhrSwapchainExtensionDeviceCommands,
+    KhrSurfaceExtensionInstanceCommands,
 };
 use vulkanalia::{Device, Instance, vk};
 use winit::window::WindowId;
@@ -16,63 +14,21 @@ pub struct NeuclidioWindow {
     pub logical_device: Device,
     pub queue_family_indices: QueueFamilyIndices,
     pub swap_chain_support: SwapChainSupport,
-    pub debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
-
     pub surface: vk::SurfaceKHR,
-    pub swap_chain: SwapChain,
-    pub pipeline: Box<dyn NeuclidioRenderPipeline>,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
-}
 
-impl NeuclidioWindow {
-    pub fn render(&mut self) -> NeuclidioResult<()> {
-        self.pipeline.render(
-            &self.logical_device,
-            &self.swap_chain,
-            self.graphics_queue,
-            self.present_queue,
-        )?;
+    #[cfg(debug_assertions)]
+    pub debug_messenger: vk::DebugUtilsMessengerEXT,
 
-        Ok(())
-    }
-
-    pub fn destroy_swap_chain(&self, skip_freeing_command_buffers: bool) {
-        self.pipeline
-            .destroy_frame_buffers(&self.logical_device, skip_freeing_command_buffers);
-
-        debug!(
-            "Destroying Vulkan swap chain image views for window with id: {:?}",
-            self.id,
-        );
-        for swap_chain_image_view in self.swap_chain.image_views.iter() {
-            unsafe {
-                self.logical_device
-                    .destroy_image_view(*swap_chain_image_view, None);
-            }
-        }
-
-        debug!(
-            "Destroying Vulkan swap chain for window with id: {:?}",
-            self.id,
-        );
-        unsafe {
-            self.logical_device
-                .destroy_swapchain_khr(self.swap_chain.chain, None);
-        }
-    }
+    pub swap_chain: Option<SwapChain>,
 }
 
 impl Drop for NeuclidioWindow {
     fn drop(&mut self) {
-        let device_wait_result = unsafe { self.logical_device.device_wait_idle() };
-
-        if let Err(err) = device_wait_result {
-            warn!("Failed to wait for device to be idle: {err}");
+        if let Some(swap_chain) = self.swap_chain.take() {
+            swap_chain.destroy(self);
         }
-
-        self.pipeline.destroy(&self.logical_device);
-        self.destroy_swap_chain(true);
 
         debug!(
             "Destroying Vulkan logical device for window with id: {:?}",
@@ -90,7 +46,8 @@ impl Drop for NeuclidioWindow {
             self.instance.destroy_surface_khr(self.surface, None);
         }
 
-        if let Some(debug_messenger) = self.debug_messenger {
+        #[cfg(debug_assertions)]
+        {
             debug!(
                 "Destroying Vulkan debug utilities messenger for window with id: {:?}",
                 self.id,
@@ -98,7 +55,7 @@ impl Drop for NeuclidioWindow {
 
             unsafe {
                 self.instance
-                    .destroy_debug_utils_messenger_ext(debug_messenger, None);
+                    .destroy_debug_utils_messenger_ext(self.debug_messenger, None);
             }
         }
 

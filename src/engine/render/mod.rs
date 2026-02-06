@@ -29,7 +29,7 @@ impl NeuclidioRenderEngine {
         self.window_manager.handle_window_change(window)
     }
 
-    pub(crate) fn clean_up_for_window(&mut self, window_id: WindowId) {
+    pub(crate) fn clean_up_for_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
         self.window_manager.cleanup_for_window(window_id)
     }
 }
