@@ -1,4 +1,4 @@
-use crate::engine::render::error::NeuclidioRenderError;
+use crate::engine::render::error::RenderError;
 use crate::error::NeuclidioResult;
 use std::collections::HashSet;
 use vulkanalia::vk::{InstanceV1_0, KhrSurfaceExtensionInstanceCommands};
@@ -39,7 +39,7 @@ impl QueueFamilyIndices {
             if let (Some(graphics), Some(present)) = (graphics, present) {
                 Ok(Self { graphics, present })
             } else {
-                Err(NeuclidioRenderError::MissingRequiredQueueFamilies.into())
+                Err(RenderError::MissingRequiredQueueFamilies.into())
             }
         }
     }

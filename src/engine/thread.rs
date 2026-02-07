@@ -1,14 +1,14 @@
-use crate::engine::proxy::NeuclidioEngineProxy;
+use crate::engine::proxy::EngineProxy;
 use std::thread::JoinHandle;
 
-pub struct NeuclidioEngineThread<T> {
+pub struct EngineThread<T> {
     join_handle: JoinHandle<T>,
 }
 
-impl<T: Send + 'static> NeuclidioEngineThread<T> {
-    pub(crate) fn new<F>(proxy: NeuclidioEngineProxy, f: F) -> Self
+impl<T: Send + 'static> EngineThread<T> {
+    pub(crate) fn new<F>(proxy: EngineProxy, f: F) -> Self
     where
-        F: FnOnce(NeuclidioEngineProxy) -> T,
+        F: FnOnce(EngineProxy) -> T,
         F: Send + 'static,
     {
         let join_handle = std::thread::spawn(|| f(proxy));

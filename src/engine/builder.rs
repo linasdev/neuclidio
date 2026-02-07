@@ -1,19 +1,19 @@
-use crate::engine::NeuclidioEngine;
-use crate::engine::render::NeuclidioRenderEngine;
-use crate::engine::render::builder::NeuclidioRenderEngineBuilder;
-use crate::engine::render::windowing::error::NeuclidioWindowingError;
+use crate::engine::Engine;
+use crate::engine::render::RenderEngine;
+use crate::engine::render::builder::RenderEngineBuilder;
+use crate::engine::render::windowing::error::WindowingError;
 use crate::error::NeuclidioResult;
 use bus::Bus;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 const DEFAULT_EVENT_BUS_SIZE: usize = 64;
 
-pub struct NeuclidioEngineBuilder {
-    render_engine: Option<NeuclidioRenderEngine>,
+pub struct EngineBuilder {
+    render_engine: Option<RenderEngine>,
     event_bus_size: usize,
 }
 
-impl Default for NeuclidioEngineBuilder {
+impl Default for EngineBuilder {
     fn default() -> Self {
         Self {
             render_engine: None,
@@ -22,12 +22,12 @@ impl Default for NeuclidioEngineBuilder {
     }
 }
 
-impl NeuclidioEngineBuilder {
+impl EngineBuilder {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_render_engine(mut self, render_engine: NeuclidioRenderEngine) -> Self {
+    pub fn with_render_engine(mut self, render_engine: RenderEngine) -> Self {
         self.render_engine = Some(render_engine);
         self
     }
@@ -37,20 +37,20 @@ impl NeuclidioEngineBuilder {
         self
     }
 
-    pub fn build(self) -> NeuclidioResult<NeuclidioEngine> {
+    pub fn build(self) -> NeuclidioResult<Engine> {
         let render_engine = match self.render_engine {
             Some(render_engine) => render_engine,
-            None => NeuclidioRenderEngineBuilder::new().build()?,
+            None => RenderEngineBuilder::new().build()?,
         };
 
         let event_bus = Bus::new(self.event_bus_size);
 
         let event_loop = EventLoop::with_user_event()
             .build()
-            .map_err(NeuclidioWindowingError::from)?;
+            .map_err(WindowingError::from)?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        Ok(NeuclidioEngine {
+        Ok(Engine {
             render_engine,
             event_bus,
             event_loop,

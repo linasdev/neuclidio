@@ -1,4 +1,4 @@
-use crate::engine::render::error::NeuclidioRenderError;
+use crate::engine::render::error::RenderError;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use itertools::Itertools;
@@ -155,7 +155,7 @@ impl SwapChain {
                 surface_format.format == vk::Format::B8G8R8A8_SRGB
                     && surface_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
             })
-            .ok_or(NeuclidioRenderError::MissingSurfaceFormat.into())
+            .ok_or(RenderError::MissingSurfaceFormat.into())
     }
 
     fn get_extent(
@@ -183,7 +183,7 @@ impl SwapChain {
         preferred_present_modes: &[vk::PresentModeKHR],
     ) -> NeuclidioResult<vk::PresentModeKHR> {
         if present_modes.is_empty() {
-            return Err(NeuclidioRenderError::MissingPresentMode.into());
+            return Err(RenderError::MissingPresentMode.into());
         }
 
         for preferred_present_mode in preferred_present_modes.iter() {
@@ -255,7 +255,7 @@ impl SwapChainSupport {
         };
 
         if formats.is_empty() || present_modes.is_empty() {
-            return Err(NeuclidioRenderError::MissingSwapChainSupport.into());
+            return Err(RenderError::MissingSwapChainSupport.into());
         }
 
         Ok(Self {

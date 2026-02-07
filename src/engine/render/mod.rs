@@ -1,4 +1,4 @@
-use crate::engine::render::windowing::window_manager::NeuclidioRenderEngineWindowManager;
+use crate::engine::render::windowing::window_manager::RenderEngineWindowManager;
 use crate::error::NeuclidioResult;
 use winit::window::{Window, WindowId};
 
@@ -8,12 +8,12 @@ pub mod pipeline;
 
 pub(crate) mod windowing;
 
-pub struct NeuclidioRenderEngine {
-    window_manager: NeuclidioRenderEngineWindowManager,
+pub struct RenderEngine {
+    window_manager: RenderEngineWindowManager,
 }
 
-impl NeuclidioRenderEngine {
-    pub(crate) fn new(window_manager: NeuclidioRenderEngineWindowManager) -> Self {
+impl RenderEngine {
+    pub(crate) fn new(window_manager: RenderEngineWindowManager) -> Self {
         Self { window_manager }
     }
 

@@ -2,12 +2,12 @@ use crate::error::NeuclidioResult;
 use std::sync::mpsc::Sender;
 use winit::window::{WindowAttributes, WindowId};
 
-pub type NeuclidioAddWindowResult = NeuclidioResult<WindowId>;
-pub type NeuclidioCloseWindowResult = NeuclidioResult<()>;
+pub type AddWindowResult = NeuclidioResult<WindowId>;
+pub type CloseWindowResult = NeuclidioResult<()>;
 
 #[derive(Debug)]
-pub enum NeuclidioWindowingEvent {
+pub enum WindowingEvent {
     ExitEventLoop,
-    AddWindow(WindowAttributes, Sender<NeuclidioAddWindowResult>),
-    CloseWindow(WindowId, Sender<NeuclidioCloseWindowResult>),
+    AddWindow(WindowAttributes, Sender<AddWindowResult>),
+    CloseWindow(WindowId, Sender<CloseWindowResult>),
 }

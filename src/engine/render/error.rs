@@ -1,16 +1,16 @@
-use crate::engine::render::pipeline::error::NeuclidioRenderPipelineError;
-use crate::engine::render::windowing::error::NeuclidioWindowingError;
+use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::windowing::error::WindowingError;
 use crate::error::NeuclidioError;
 use vulkanalia::loader::LoaderError;
-use vulkanalia::vk::ErrorCode;
+use vulkanalia::vk;
 
 #[derive(Debug)]
-pub enum NeuclidioRenderError {
-    WindowingError(NeuclidioWindowingError),
-    RenderPipelineError(NeuclidioRenderPipelineError),
+pub enum RenderError {
+    WindowingError(WindowingError),
+    RenderPipelineError(RenderPipelineError),
     FailedToLoadLibrary(libloading::Error),
     FailedToCreateVulkanEntry(Box<dyn LoaderError>),
-    VulkanErrorCode(ErrorCode),
+    VulkanErrorCode(vk::ErrorCode),
     NoSuitableDevice,
     MissingRequiredQueueFamilies,
     MissingSwapChainSupport,
@@ -21,38 +21,62 @@ pub enum NeuclidioRenderError {
     OutOfDateSwapChain,
 }
 
-impl From<NeuclidioWindowingError> for NeuclidioRenderError {
-    fn from(value: NeuclidioWindowingError) -> Self {
+impl From<WindowingError> for RenderError {
+    fn from(value: WindowingError) -> Self {
         Self::WindowingError(value)
     }
 }
 
-impl From<NeuclidioWindowingError> for NeuclidioError {
-    fn from(value: NeuclidioWindowingError) -> Self {
-        NeuclidioRenderError::from(value).into()
+impl From<WindowingError> for NeuclidioError {
+    fn from(value: WindowingError) -> Self {
+        RenderError::from(value).into()
     }
 }
 
-impl From<NeuclidioRenderPipelineError> for NeuclidioRenderError {
-    fn from(value: NeuclidioRenderPipelineError) -> Self {
+impl From<RenderPipelineError> for RenderError {
+    fn from(value: RenderPipelineError) -> Self {
         Self::RenderPipelineError(value)
     }
 }
 
-impl From<NeuclidioRenderPipelineError> for NeuclidioError {
-    fn from(value: NeuclidioRenderPipelineError) -> Self {
-        NeuclidioRenderError::from(value).into()
+impl From<RenderPipelineError> for NeuclidioError {
+    fn from(value: RenderPipelineError) -> Self {
+        RenderError::from(value).into()
     }
 }
 
-impl From<ErrorCode> for NeuclidioRenderError {
-    fn from(value: ErrorCode) -> Self {
+impl From<libloading::Error> for RenderError {
+    fn from(value: libloading::Error) -> Self {
+        Self::FailedToLoadLibrary(value)
+    }
+}
+
+impl From<libloading::Error> for NeuclidioError {
+    fn from(value: libloading::Error) -> Self {
+        RenderError::from(value).into()
+    }
+}
+
+impl From<Box<dyn LoaderError>> for RenderError {
+    fn from(value: Box<dyn LoaderError>) -> Self {
+        Self::FailedToCreateVulkanEntry(value)
+    }
+}
+
+impl From<Box<dyn LoaderError>> for NeuclidioError {
+    fn from(value: Box<dyn LoaderError>) -> Self {
+        RenderError::from(value).into()
+    }
+}
+
+impl From<vk::ErrorCode> for RenderError {
+    fn from(value: vk::ErrorCode) -> Self {
         Self::VulkanErrorCode(value)
     }
 }
 
-impl From<ErrorCode> for NeuclidioError {
-    fn from(value: ErrorCode) -> Self {
-        NeuclidioRenderError::from(value).into()
+impl From<vk::ErrorCode> for NeuclidioError {
+    fn from(value: vk::ErrorCode) -> Self {
+        RenderError::from(value).into()
     }
 }

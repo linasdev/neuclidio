@@ -1,12 +1,12 @@
-use crate::engine::proxy::NeuclidioEngineProxy;
-use crate::engine::render::NeuclidioRenderEngine;
-use crate::engine::render::windowing::error::NeuclidioWindowingError;
-use crate::engine::thread::NeuclidioEngineThread;
+use crate::engine::proxy::EngineProxy;
+use crate::engine::render::RenderEngine;
+use crate::engine::render::windowing::error::WindowingError;
+use crate::engine::thread::EngineThread;
 use crate::error::NeuclidioResult;
-use crate::event::NeuclidioEvent;
+use crate::event::Event;
 use bus::Bus;
 use log::{error, info, warn};
-use render::windowing::event::NeuclidioWindowingEvent;
+use render::windowing::event::WindowingEvent;
 use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -18,52 +18,52 @@ pub mod proxy;
 pub mod render;
 pub mod thread;
 
-pub struct NeuclidioEngine {
-    render_engine: NeuclidioRenderEngine,
-    event_bus: Bus<NeuclidioEvent>,
-    event_loop: EventLoop<NeuclidioWindowingEvent>,
+pub struct Engine {
+    render_engine: RenderEngine,
+    event_bus: Bus<Event>,
+    event_loop: EventLoop<WindowingEvent>,
 }
 
-impl NeuclidioEngine {
-    pub fn proxy(&mut self) -> NeuclidioEngineProxy {
-        NeuclidioEngineProxy::new(self.event_bus.add_rx(), self.event_loop.create_proxy())
+impl Engine {
+    pub fn proxy(&mut self) -> EngineProxy {
+        EngineProxy::new(self.event_bus.add_rx(), self.event_loop.create_proxy())
     }
 
-    pub fn thread<F, T>(&mut self, f: F) -> NeuclidioEngineThread<T>
+    pub fn thread<F, T>(&mut self, f: F) -> EngineThread<T>
     where
-        F: FnOnce(NeuclidioEngineProxy) -> T,
+        F: FnOnce(EngineProxy) -> T,
         F: Send + 'static,
         T: Send + 'static,
     {
-        NeuclidioEngineThread::new(self.proxy(), f)
+        EngineThread::new(self.proxy(), f)
     }
 
     pub fn run(self) -> NeuclidioResult<()> {
         self.event_loop
-            .run_app(&mut NeuclidioEngineApp {
+            .run_app(&mut EngineApp {
                 render_engine: self.render_engine,
                 event_bus: self.event_bus,
                 windows: HashMap::new(),
             })
-            .map_err(NeuclidioWindowingError::EventLoopError)?;
+            .map_err(WindowingError::from)?;
 
         Ok(())
     }
 }
 
-struct NeuclidioEngineApp {
-    render_engine: NeuclidioRenderEngine,
-    event_bus: Bus<NeuclidioEvent>,
+struct EngineApp {
+    render_engine: RenderEngine,
+    event_bus: Bus<Event>,
     windows: HashMap<WindowId, Window>,
 }
 
-impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
+impl ApplicationHandler<WindowingEvent> for EngineApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NeuclidioWindowingEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WindowingEvent) {
         match event {
-            NeuclidioWindowingEvent::ExitEventLoop => event_loop.exit(),
-            NeuclidioWindowingEvent::AddWindow(mut window_attributes, result_sender) => {
+            WindowingEvent::ExitEventLoop => event_loop.exit(),
+            WindowingEvent::AddWindow(mut window_attributes, result_sender) => {
                 if window_attributes.title.as_str() == "winit window" {
                     window_attributes = window_attributes.with_title("Neuclidio Example");
                 }
@@ -100,14 +100,14 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
                     Err(err) => {
                         error!("Failed to add window: {}", err);
 
-                        let value = Err(NeuclidioWindowingError::OsError(err).into());
+                        let value = Err(WindowingError::OsError(err).into());
                         if let Err(_) = result_sender.send(value) {
                             error!("Failed to send result across windowing event channel");
                         }
                     }
                 }
             }
-            NeuclidioWindowingEvent::CloseWindow(window_id, result_sender) => {
+            WindowingEvent::CloseWindow(window_id, result_sender) => {
                 match self.windows.remove(&window_id) {
                     Some(window) => {
                         if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
@@ -125,7 +125,7 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
                         }
                     }
                     None => {
-                        let err = NeuclidioWindowingError::WindowNotFound;
+                        let err = WindowingError::WindowNotFound;
                         error!("Failed to close window: {:?}", err);
 
                         let value = Err(err.into());
@@ -155,8 +155,7 @@ impl ApplicationHandler<NeuclidioWindowingEvent> for NeuclidioEngineApp {
                 self.windows.remove(&window_id);
                 info!("Closed window (due to user request) with id: {window_id:?}");
 
-                self.event_bus
-                    .broadcast(NeuclidioEvent::WindowClosed(window_id));
+                self.event_bus.broadcast(Event::WindowClosed(window_id));
             }
             WindowEvent::Resized(_) => match self.windows.get(&window_id) {
                 Some(window) => {

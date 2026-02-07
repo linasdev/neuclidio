@@ -1,4 +1,4 @@
-use crate::engine::render::pipeline::error::NeuclidioRenderPipelineError;
+use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use vulkanalia::bytecode::Bytecode;
@@ -12,7 +12,7 @@ pub(crate) mod synchronization;
 pub(crate) mod uniform;
 pub(crate) mod vertex;
 
-pub trait NeuclidioRenderPipeline {
+pub trait RenderPipeline {
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
     fn prepare_for_reset(&self, neuclidio_window: &NeuclidioWindow);
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
@@ -23,7 +23,7 @@ pub(crate) fn create_shader_module(
     logical_device: &Device,
     bytecode: &[u8],
 ) -> NeuclidioResult<vk::ShaderModule> {
-    let bytecode = Bytecode::new(bytecode).map_err(NeuclidioRenderPipelineError::ByteCodeError)?;
+    let bytecode = Bytecode::new(bytecode).map_err(RenderPipelineError::from)?;
     let shader_module_create_info = vk::ShaderModuleCreateInfo::builder()
         .code(bytecode.code())
         .code_size(bytecode.code_size())

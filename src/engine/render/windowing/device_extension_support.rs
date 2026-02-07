@@ -1,4 +1,4 @@
-use crate::engine::render::error::NeuclidioRenderError;
+use crate::engine::render::error::RenderError;
 use crate::error::NeuclidioResult;
 use std::collections::HashSet;
 use vulkanalia::vk::InstanceV1_0;
@@ -23,7 +23,7 @@ impl DeviceExtensionSupport {
         if required_extensions.iter().all(|e| extensions.contains(e)) {
             Ok(())
         } else {
-            Err(NeuclidioRenderError::MissingDeviceExtensions.into())
+            Err(RenderError::MissingDeviceExtensions.into())
         }
     }
 }

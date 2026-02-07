@@ -1,6 +1,6 @@
-use crate::engine::render::error::NeuclidioRenderError;
-use crate::engine::render::pipeline::NeuclidioRenderPipeline;
-use crate::engine::render::pipeline::standard::NeuclidioStandardRenderPipeline;
+use crate::engine::render::error::RenderError;
+use crate::engine::render::pipeline::RenderPipeline;
+use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
@@ -30,14 +30,14 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.na
 /// The Vulkan SDK version that started requiring the portability subset extension for macOS.
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
-pub struct NeuclidioRenderEngineWindowManager {
+pub struct RenderEngineWindowManager {
     application_info: vk::ApplicationInfo,
     vulkan_entry: Entry,
     windows: HashMap<WindowId, NeuclidioWindow>,
-    pipelines: HashMap<WindowId, Box<dyn NeuclidioRenderPipeline>>,
+    pipelines: HashMap<WindowId, Box<dyn RenderPipeline>>,
 }
 
-impl NeuclidioRenderEngineWindowManager {
+impl RenderEngineWindowManager {
     pub fn new(application_info: vk::ApplicationInfo, vulkan_entry: Entry) -> Self {
         Self {
             application_info,
@@ -91,7 +91,7 @@ impl NeuclidioRenderEngineWindowManager {
 
         neuclidio_window.swap_chain.replace(swap_chain);
 
-        let pipeline = Box::new(NeuclidioStandardRenderPipeline::new(
+        let pipeline = Box::new(StandardRenderPipeline::new(
             &neuclidio_window,
             physical_device,
             3, // TODO: Make this configurable
@@ -126,7 +126,7 @@ impl NeuclidioRenderEngineWindowManager {
 
         match pipeline.render(neuclidio_window) {
             Ok(_) => {}
-            Err(NeuclidioError::RenderError(NeuclidioRenderError::OutOfDateSwapChain)) => {
+            Err(NeuclidioError::RenderError(RenderError::OutOfDateSwapChain)) => {
                 self.handle_window_change(window)?;
                 return Ok(());
             }
@@ -218,7 +218,7 @@ impl NeuclidioRenderEngineWindowManager {
         };
 
         if VALIDATION_ENABLED && !available_instance_layers.contains(&VALIDATION_LAYER) {
-            return Err(NeuclidioRenderError::MissingValidationLayer.into());
+            return Err(RenderError::MissingValidationLayer.into());
         }
 
         let layers = if VALIDATION_ENABLED {
@@ -399,7 +399,7 @@ impl NeuclidioRenderEngineWindowManager {
             );
             Ok(physical_device_pair.0)
         } else {
-            Err(NeuclidioRenderError::NoSuitableDevice.into())
+            Err(RenderError::NoSuitableDevice.into())
         }
     }
 

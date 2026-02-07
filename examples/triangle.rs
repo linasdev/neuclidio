@@ -1,11 +1,11 @@
-use neuclidio::engine::builder::NeuclidioEngineBuilder;
-use neuclidio::event::NeuclidioEvent;
+use neuclidio::engine::builder::EngineBuilder;
+use neuclidio::event::Event;
 use winit::window::WindowAttributes;
 
 fn main() {
     env_logger::init();
 
-    let mut neuclidio = NeuclidioEngineBuilder::new()
+    let mut neuclidio = EngineBuilder::new()
         .build()
         .expect("Failed to build neuclidio engine");
 
@@ -16,7 +16,7 @@ fn main() {
             .expect("Failed to add window");
 
         while let Ok(event) = proxy.poll_for_event() {
-            if let Some(NeuclidioEvent::WindowClosed(_)) = event {
+            if let Some(Event::WindowClosed(_)) = event {
                 proxy.exit();
             }
         }

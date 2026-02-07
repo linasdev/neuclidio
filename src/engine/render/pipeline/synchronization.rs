@@ -2,7 +2,7 @@ use crate::error::NeuclidioResult;
 use vulkanalia::vk::{DeviceV1_0, Handle};
 use vulkanalia::{Device, vk};
 
-pub struct NeuclidioRenderPipelineSynchronization {
+pub struct RenderPipelineSynchronization {
     pub image_available_semaphores: Vec<vk::Semaphore>,
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub in_flight_fences: Vec<vk::Fence>,
@@ -11,7 +11,7 @@ pub struct NeuclidioRenderPipelineSynchronization {
     pub frame: usize,
 }
 
-impl NeuclidioRenderPipelineSynchronization {
+impl RenderPipelineSynchronization {
     pub fn get_current_image_available_semaphore(&self) -> vk::Semaphore {
         self.image_available_semaphores[self.frame]
     }

@@ -1,19 +1,18 @@
-use crate::engine::render::NeuclidioRenderEngine;
-use crate::engine::render::error::NeuclidioRenderError;
-use crate::engine::render::windowing::window_manager::NeuclidioRenderEngineWindowManager;
+use crate::engine::render::RenderEngine;
+use crate::engine::render::windowing::window_manager::RenderEngineWindowManager;
 use crate::error::NeuclidioResult;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::vk::HasBuilder;
 use vulkanalia::{Entry, vk};
 
-pub struct NeuclidioRenderEngineBuilder {
+pub struct RenderEngineBuilder {
     pub application_name: String,
     pub application_version_major: u32,
     pub application_version_minor: u32,
     pub application_version_patch: u32,
 }
 
-impl Default for NeuclidioRenderEngineBuilder {
+impl Default for RenderEngineBuilder {
     fn default() -> Self {
         Self {
             application_name: "Neuclidio Example".to_string(),
@@ -24,7 +23,7 @@ impl Default for NeuclidioRenderEngineBuilder {
     }
 }
 
-impl NeuclidioRenderEngineBuilder {
+impl RenderEngineBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -46,7 +45,7 @@ impl NeuclidioRenderEngineBuilder {
         self
     }
 
-    pub fn build(self) -> NeuclidioResult<NeuclidioRenderEngine> {
+    pub fn build(self) -> NeuclidioResult<RenderEngine> {
         let application_info = vk::ApplicationInfo::builder()
             .application_name((self.application_name + "\0").as_bytes())
             .application_version(vk::make_version(
@@ -64,14 +63,12 @@ impl NeuclidioRenderEngineBuilder {
             .build();
 
         let vulkan_entry = unsafe {
-            let loader = LibloadingLoader::new(LIBRARY)
-                .map_err(NeuclidioRenderError::FailedToLoadLibrary)?;
-            Entry::new(loader).map_err(NeuclidioRenderError::FailedToCreateVulkanEntry)?
+            let loader = LibloadingLoader::new(LIBRARY)?;
+            Entry::new(loader)?
         };
 
-        let window_manager =
-            NeuclidioRenderEngineWindowManager::new(application_info, vulkan_entry);
+        let window_manager = RenderEngineWindowManager::new(application_info, vulkan_entry);
 
-        Ok(NeuclidioRenderEngine::new(window_manager))
+        Ok(RenderEngine::new(window_manager))
     }
 }
