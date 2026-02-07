@@ -3,7 +3,7 @@ use vulkanalia::bytecode::BytecodeError;
 #[derive(Debug)]
 pub enum RenderPipelineError {
     ByteCodeError(BytecodeError),
-    MissingSwapChain,
+    Unprepared,
 }
 
 impl From<BytecodeError> for RenderPipelineError {

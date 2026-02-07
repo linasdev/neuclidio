@@ -6,6 +6,7 @@ pub mod builder;
 pub mod error;
 pub mod pipeline;
 
+pub(crate) mod renderable;
 pub(crate) mod windowing;
 
 pub struct RenderEngine {

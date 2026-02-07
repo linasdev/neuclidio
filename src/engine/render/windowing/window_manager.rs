@@ -1,6 +1,6 @@
 use crate::engine::render::error::RenderError;
-use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
+use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
@@ -67,7 +67,7 @@ impl RenderEngineWindowManager {
         let graphics_queue = Self::get_device_queue(&logical_device, queue_family_indices.graphics);
         let present_queue = Self::get_device_queue(&logical_device, queue_family_indices.present);
 
-        let mut neuclidio_window = NeuclidioWindow {
+        let neuclidio_window = NeuclidioWindow {
             id: window.id(),
             instance,
             logical_device,
@@ -80,16 +80,6 @@ impl RenderEngineWindowManager {
             debug_messenger: debug_messenger.unwrap(),
             swap_chain: None,
         };
-
-        debug!("Creating Vulkan swap chain for window with id: {window_id:?}");
-        let swap_chain = SwapChain::new(
-            window,
-            &neuclidio_window,
-            2,                                                        // TODO: Make configurable
-            &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
-        )?;
-
-        neuclidio_window.swap_chain.replace(swap_chain);
 
         let pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
             &neuclidio_window,
@@ -153,7 +143,7 @@ impl RenderEngineWindowManager {
 
         let mut pipeline = self.pipelines.get_mut(&window_id);
 
-        if let Some(pipeline) = pipeline.as_ref() {
+        if let Some(pipeline) = pipeline.as_mut() {
             pipeline.prepare_for_reset(neuclidio_window);
         }
 
@@ -190,7 +180,7 @@ impl RenderEngineWindowManager {
 
         unsafe { neuclidio_window.logical_device.device_wait_idle()? };
 
-        if let Some(pipeline) = self.pipelines.remove(&window_id) {
+        if let Some(mut pipeline) = self.pipelines.remove(&window_id) {
             pipeline.prepare_for_reset(neuclidio_window);
 
             if let Some(swap_chain) = neuclidio_window.swap_chain.take() {

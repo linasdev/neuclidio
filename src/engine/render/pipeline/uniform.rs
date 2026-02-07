@@ -22,11 +22,15 @@ impl ModelViewProjection {
     pub fn descriptor_set_layout_binding() -> Vec<vk::DescriptorSetLayoutBinding> {
         let descriptor_set_layout_binding = vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
             .descriptor_count(1)
             .stage_flags(vk::ShaderStageFlags::VERTEX)
             .build();
 
         vec![descriptor_set_layout_binding]
+    }
+
+    pub fn size_in_uniform_buffer() -> u32 {
+        size_of::<ModelViewProjection>() as u32
     }
 }
