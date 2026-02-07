@@ -1,5 +1,5 @@
 use crate::engine::render::error::RenderError;
-use crate::engine::render::pipeline::RenderPipeline;
+use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
@@ -34,7 +34,7 @@ pub struct RenderEngineWindowManager {
     application_info: vk::ApplicationInfo,
     vulkan_entry: Entry,
     windows: HashMap<WindowId, NeuclidioWindow>,
-    pipelines: HashMap<WindowId, Box<dyn RenderPipeline>>,
+    pipelines: HashMap<WindowId, RenderPipeline>,
 }
 
 impl RenderEngineWindowManager {
@@ -91,11 +91,11 @@ impl RenderEngineWindowManager {
 
         neuclidio_window.swap_chain.replace(swap_chain);
 
-        let pipeline = Box::new(StandardRenderPipeline::new(
+        let pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
             &neuclidio_window,
             physical_device,
             3, // TODO: Make this configurable
-        )?);
+        )?));
 
         self.windows.insert(window_id, neuclidio_window);
         self.pipelines.insert(window_id, pipeline);
