@@ -30,5 +30,5 @@ env_logger = "0.11.8"
 default = []
 
 [[example]]
-name = "triangle"
+name = "stanford_dragon"
 path = "examples/stanford_dragon/main.rs"
