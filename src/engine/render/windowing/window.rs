@@ -1,12 +1,12 @@
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
 use log::debug;
-use vulkanalia::vk::{
-    DeviceV1_0, ExtDebugUtilsExtensionInstanceCommands, InstanceV1_0,
-    KhrSurfaceExtensionInstanceCommands,
-};
+use vulkanalia::vk::{DeviceV1_0, InstanceV1_0, KhrSurfaceExtensionInstanceCommands};
 use vulkanalia::{Device, Instance, vk};
 use winit::window::WindowId;
+
+#[cfg(debug_assertions)]
+use vulkanalia::vk::ExtDebugUtilsExtensionInstanceCommands;
 
 pub struct NeuclidioWindow {
     pub id: WindowId,
