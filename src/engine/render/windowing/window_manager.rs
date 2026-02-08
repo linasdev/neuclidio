@@ -52,7 +52,11 @@ impl RenderEngineWindowManager {
         let window_id = window.id();
 
         debug!("Creating Vulkan instance for window with id: {window_id:?}");
+        #[cfg(debug_assertions)]
         let (instance, debug_messenger) = self.create_instance(window)?;
+
+        #[cfg(not(debug_assertions))]
+        let (instance, _) = self.create_instance(window)?;
 
         debug!("Creating Vulkan surface for window with id: {window_id:?}");
         let surface = Self::create_surface(&instance, window)?;
