@@ -1,4 +1,3 @@
-use crate::component::Component;
 use crate::component::mesh::loader::MeshLoader;
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::RenderPipelineExt;
@@ -8,13 +7,14 @@ use crate::engine::render::pipeline::state::command::RenderPipelineCommandState;
 use crate::engine::render::pipeline::state::descriptor::RenderPipelineDescriptorState;
 use crate::engine::render::pipeline::state::pipeline::RenderPipelineState;
 use crate::engine::render::pipeline::state::synchronization::RenderPipelineSynchronizationState;
+use crate::engine::render::pipeline::uniform::ViewProjectionUniform;
 use crate::engine::render::renderable::{Renderable, RenderableExt};
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::transform::euclidean::EuclideanTransform;
 use crate::entity::transform::{Transform, TransformExt};
 use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use std::collections::BTreeMap;
 use std::time::Instant;
 use vulkanalia::vk;
@@ -48,7 +48,10 @@ impl StandardRenderPipeline {
         physical_device: vk::PhysicalDevice,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
-        let descriptor_state = RenderPipelineDescriptorState::new(neuclidio_window)?;
+        let descriptor_state = RenderPipelineDescriptorState::new(
+            neuclidio_window,
+            &ViewProjectionUniform::descriptor_set_layout_bindings(),
+        )?;
         let synchronization_state =
             RenderPipelineSynchronizationState::new(neuclidio_window, max_frames_in_flight)?;
         let command_state = RenderPipelineCommandState::new(neuclidio_window)?;
@@ -150,19 +153,26 @@ impl StandardRenderPipeline {
     }
 
     fn fill_uniform_buffer(
-        renderable_entities: &RenderableEntities,
-        mut uniform_buffer_memory: *mut u8,
-    ) {
-        let all_entities = renderable_entities.iter().flat_map(|pair| pair.1.iter());
+        neuclidio_window: &NeuclidioWindow,
+        uniform_buffer_memory: *mut u8,
+    ) -> NeuclidioResult<()> {
+        let swap_chain = neuclidio_window
+            .swap_chain
+            .as_ref()
+            .ok_or(RenderPipelineError::Unprepared)?;
 
-        for (_, entity) in all_entities {
-            entity.do_with_transform(|transform| {
-                transform.load_into_uniform_buffer(uniform_buffer_memory);
-                uniform_buffer_memory = unsafe {
-                    uniform_buffer_memory.add(transform.size_in_uniform_buffer() as usize)
-                };
-            });
-        }
+        let view = Mat4::IDENTITY;
+        let projection = Mat4::perspective_rh(
+            75f32.to_radians(),
+            swap_chain.extent().width as f32 / swap_chain.extent().height as f32,
+            0.1,
+            100.0,
+        );
+
+        ViewProjectionUniform::new(view, projection)
+            .load_into_uniform_buffer(uniform_buffer_memory);
+
+        Ok(())
     }
 
     fn record_command_buffer(
@@ -219,7 +229,6 @@ impl StandardRenderPipeline {
 
         if let Some(render_buffer) = allocator_state.render_buffer() {
             let mut current_render_buffer_offset = 0;
-            let mut current_uniform_buffer_offset = 0;
             for (renderable, entities_with_renderable) in renderable_entities.iter() {
                 unsafe {
                     logical_device.cmd_bind_vertex_buffers(
@@ -234,18 +243,29 @@ impl StandardRenderPipeline {
                         current_render_buffer_offset + renderable.index_offset(),
                         vk::IndexType::UINT32,
                     );
+                    logical_device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_state.pipeline_layout(),
+                        0,
+                        &[descriptor_set],
+                        &[],
+                    );
                 }
 
                 for (_, entity) in entities_with_renderable.iter() {
                     unsafe {
-                        logical_device.cmd_bind_descriptor_sets(
-                            command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            pipeline_state.pipeline_layout(),
-                            0,
-                            &[descriptor_set],
-                            &[current_uniform_buffer_offset],
-                        );
+                        entity.do_with_transform(|transform| {
+                            let push_constant = transform.as_push_constant();
+                            logical_device.cmd_push_constants(
+                                command_buffer,
+                                pipeline_state.pipeline_layout(),
+                                vk::ShaderStageFlags::VERTEX,
+                                0,
+                                push_constant.as_bytes(),
+                            );
+                        });
+
                         logical_device.cmd_draw_indexed(
                             command_buffer,
                             renderable.index_count() as u32,
@@ -255,10 +275,6 @@ impl StandardRenderPipeline {
                             0,
                         );
                     }
-
-                    entity.do_with_transform(|transform| {
-                        current_uniform_buffer_offset += transform.size_in_uniform_buffer()
-                    });
                 }
 
                 current_render_buffer_offset += renderable.size_in_render_buffer();
@@ -307,9 +323,24 @@ impl RenderPipelineExt for StandardRenderPipeline {
         self.synchronization_state
             .set_image_in_flight_to_current_in_flight_fence(image_index)?;
 
+        self.command_state.record_command_buffer(
+            neuclidio_window,
+            image_index,
+            |command_buffer| {
+                Self::record_command_buffer(
+                    neuclidio_window,
+                    &self.pipeline_state,
+                    &self.descriptor_state,
+                    &self.allocator_state,
+                    &self.renderable_entities,
+                    image_index,
+                    command_buffer,
+                )
+            },
+        )?;
         self.allocator_state
             .fill_uniform_buffer(image_index, |uniform_buffer_memory| {
-                Self::fill_uniform_buffer(&self.renderable_entities, uniform_buffer_memory)
+                Self::fill_uniform_buffer(&neuclidio_window, uniform_buffer_memory)
             })?;
 
         self.synchronization_state
@@ -365,38 +396,25 @@ impl RenderPipelineExt for StandardRenderPipeline {
 
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
         self.synchronization_state.reset(neuclidio_window)?;
-        self.allocator_state.reset(neuclidio_window)?;
-        self.descriptor_state
-            .reset(neuclidio_window, &self.allocator_state)?;
+        self.allocator_state.reset(
+            neuclidio_window,
+            ViewProjectionUniform::size_in_uniform_buffer(),
+        )?;
+        self.descriptor_state.reset(
+            neuclidio_window,
+            &self.allocator_state,
+            ViewProjectionUniform::size_in_uniform_buffer(),
+        )?;
 
         self.pipeline_state = Some(RenderPipelineState::new(
             neuclidio_window,
             &self.descriptor_state,
+            &[ModelPushConstant::push_constant_range()],
             VERTEX_SHADER_BYTECODE,
             FRAGMENT_SHADER_BYTECODE,
         )?);
 
-        self.allocator_state.fill_render_buffer(
-            neuclidio_window,
-            &self.command_state,
-            self.render_buffer_size(),
-            |render_buffer_memory| {
-                Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-            },
-        )?;
-
-        self.command_state
-            .reset(neuclidio_window, |command_buffer_index, command_buffer| {
-                Self::record_command_buffer(
-                    neuclidio_window,
-                    &self.pipeline_state,
-                    &self.descriptor_state,
-                    &self.allocator_state,
-                    &self.renderable_entities,
-                    command_buffer_index,
-                    command_buffer,
-                )
-            })?;
+        self.command_state.reset(neuclidio_window)?;
 
         Ok(())
     }

@@ -9,6 +9,7 @@ use vulkanalia_vma::{
 
 pub mod error;
 
+pub(crate) mod push_constant;
 pub(crate) mod standard;
 pub(crate) mod state;
 pub(crate) mod uniform;

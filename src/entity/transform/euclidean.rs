@@ -1,4 +1,5 @@
-use crate::engine::render::pipeline::uniform::ModelViewProjection;
+use crate::engine::render::pipeline::push_constant::PushConstant;
+use crate::engine::render::pipeline::push_constant::model::ModelPushConstant;
 use crate::entity::transform::TransformExt;
 use glam::{Mat4, Quat, Vec3};
 
@@ -53,25 +54,8 @@ impl EuclideanTransform {
 }
 
 impl TransformExt for EuclideanTransform {
-    fn load_into_uniform_buffer(&self, uniform_buffer_memory: *mut u8) {
-        let mvp_memory_object = unsafe {
-            let mvp_memory: *mut ModelViewProjection = uniform_buffer_memory.cast();
-            mvp_memory.as_mut()
-        };
-
-        let mvp = ModelViewProjection::new(
-            self.get_model_matrix(),
-            Mat4::IDENTITY,
-            Mat4::perspective_rh(75f32.to_radians(), (1000 as f32) / (750 as f32), 0.1, 100.0),
-        );
-
-        if let Some(mvp_memory_object) = mvp_memory_object {
-            *mvp_memory_object = mvp;
-        }
-    }
-
-    fn size_in_uniform_buffer(&self) -> u32 {
-        ModelViewProjection::size_in_uniform_buffer()
+    fn as_push_constant(&self) -> PushConstant {
+        ModelPushConstant::new(self.get_model_matrix()).into()
     }
 }
 

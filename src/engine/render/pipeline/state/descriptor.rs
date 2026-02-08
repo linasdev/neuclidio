@@ -1,6 +1,5 @@
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::state::allocator::RenderPipelineAllocatorState;
-use crate::engine::render::pipeline::uniform::ModelViewProjection;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
@@ -15,15 +14,17 @@ pub struct RenderPipelineDescriptorState {
 }
 
 impl RenderPipelineDescriptorState {
-    pub fn new(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<Self> {
+    pub fn new(
+        neuclidio_window: &NeuclidioWindow,
+        descriptor_set_layout_bindings: &[vk::DescriptorSetLayoutBinding],
+    ) -> NeuclidioResult<Self> {
         debug!(
             "Creating Vulkan descriptor set layout for window with id: {:?}",
             neuclidio_window.id
         );
 
-        let bindings = ModelViewProjection::descriptor_set_layout_binding();
         let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&bindings)
+            .bindings(descriptor_set_layout_bindings)
             .build();
 
         let descriptor_set_layout = unsafe {
@@ -61,6 +62,7 @@ impl RenderPipelineDescriptorState {
         &mut self,
         neuclidio_window: &NeuclidioWindow,
         allocator_state: &RenderPipelineAllocatorState,
+        uniform_buffer_size: vk::DeviceSize,
     ) -> NeuclidioResult<()> {
         debug!(
             "Creating Vulkan descriptor pool for window with id: {:?}",
@@ -79,6 +81,7 @@ impl RenderPipelineDescriptorState {
             self.descriptor_set_layout,
             descriptor_pool,
             allocator_state.uniform_buffers()?,
+            uniform_buffer_size,
         )?;
 
         self.descriptor_pool = Some(descriptor_pool);
@@ -123,7 +126,7 @@ impl RenderPipelineDescriptorState {
             .ok_or(RenderPipelineError::Unprepared)?;
 
         let descriptor_pool_size = vk::DescriptorPoolSize::builder()
-            .type_(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+            .type_(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(swap_chain.image_count() as u32)
             .build();
 
@@ -146,6 +149,7 @@ impl RenderPipelineDescriptorState {
         descriptor_set_layout: vk::DescriptorSetLayout,
         descriptor_pool: vk::DescriptorPool,
         uniform_buffers: &[(vk::Buffer, Allocation)],
+        uniform_buffer_size: vk::DeviceSize,
     ) -> NeuclidioResult<Vec<vk::DescriptorSet>> {
         let logical_device = &neuclidio_window.logical_device;
         let swap_chain = neuclidio_window
@@ -165,7 +169,7 @@ impl RenderPipelineDescriptorState {
             let descriptor_buffer_info = vk::DescriptorBufferInfo::builder()
                 .buffer(uniform_buffers[i].0)
                 .offset(0)
-                .range(size_of::<ModelViewProjection>() as u64)
+                .range(uniform_buffer_size)
                 .build();
 
             let buffer_info = vec![descriptor_buffer_info];
@@ -174,7 +178,7 @@ impl RenderPipelineDescriptorState {
                 .dst_set(descriptor_sets[i])
                 .dst_binding(0)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .buffer_info(&buffer_info)
                 .build();
 

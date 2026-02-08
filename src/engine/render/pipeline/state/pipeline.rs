@@ -19,6 +19,7 @@ impl RenderPipelineState {
     pub fn new(
         neuclidio_window: &NeuclidioWindow,
         descriptor_state: &RenderPipelineDescriptorState,
+        push_constant_ranges: &[vk::PushConstantRange],
         vertex_shader_bytecode: &[u8],
         fragment_shader_bytecode: &[u8],
     ) -> NeuclidioResult<Self> {
@@ -45,7 +46,8 @@ impl RenderPipelineState {
 
         let pipeline_layout = Self::create_pipeline_layout(
             neuclidio_window,
-            descriptor_state.descriptor_set_layout(),
+            &[descriptor_state.descriptor_set_layout()],
+            push_constant_ranges,
         )?;
 
         debug!(
@@ -307,11 +309,12 @@ impl RenderPipelineState {
 
     fn create_pipeline_layout(
         neuclidio_window: &NeuclidioWindow,
-        descriptor_set_layout: vk::DescriptorSetLayout,
+        descriptor_set_layouts: &[vk::DescriptorSetLayout],
+        push_constant_ranges: &[vk::PushConstantRange],
     ) -> NeuclidioResult<vk::PipelineLayout> {
-        let set_layouts = vec![descriptor_set_layout];
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(&set_layouts)
+            .set_layouts(&descriptor_set_layouts)
+            .push_constant_ranges(push_constant_ranges)
             .build();
 
         let pipeline_layout = unsafe {

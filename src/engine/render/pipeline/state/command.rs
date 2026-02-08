@@ -18,7 +18,7 @@ impl RenderPipelineCommandState {
         );
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::empty())
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(neuclidio_window.queue_family_indices.graphics)
             .build();
 
@@ -52,14 +52,7 @@ impl RenderPipelineCommandState {
         }
     }
 
-    pub fn reset<CBR>(
-        &mut self,
-        neuclidio_window: &NeuclidioWindow,
-        mut command_buffer_recorder: CBR,
-    ) -> NeuclidioResult<()>
-    where
-        CBR: FnMut(usize, vk::CommandBuffer) -> NeuclidioResult<()>,
-    {
+    pub fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
         let logical_device = &neuclidio_window.logical_device;
         let swap_chain = neuclidio_window
             .swap_chain
@@ -80,21 +73,41 @@ impl RenderPipelineCommandState {
         let command_buffers =
             unsafe { logical_device.allocate_command_buffers(&command_buffer_allocate_info)? };
 
-        for (command_buffer_index, command_buffer) in command_buffers.iter().enumerate() {
-            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().build();
+        self.command_buffers = Some(command_buffers);
 
-            unsafe {
-                logical_device.begin_command_buffer(*command_buffer, &command_buffer_begin_info)?;
-            }
+        Ok(())
+    }
 
-            command_buffer_recorder(command_buffer_index, *command_buffer)?;
+    pub fn record_command_buffer<CBR>(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        command_buffer_index: usize,
+        mut command_buffer_recorder: CBR,
+    ) -> NeuclidioResult<()>
+    where
+        CBR: FnMut(vk::CommandBuffer) -> NeuclidioResult<()>,
+    {
+        let logical_device = &neuclidio_window.logical_device;
+        let command_buffer = self.command_buffer(command_buffer_index)?;
 
-            unsafe {
-                logical_device.end_command_buffer(*command_buffer)?;
-            }
+        unsafe {
+            logical_device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
         }
 
-        self.command_buffers = Some(command_buffers);
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .build();
+
+        unsafe {
+            logical_device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
+        }
+
+        command_buffer_recorder(command_buffer)?;
+
+        unsafe {
+            logical_device.end_command_buffer(command_buffer)?;
+        }
 
         Ok(())
     }

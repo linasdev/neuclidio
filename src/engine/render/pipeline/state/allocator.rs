@@ -1,6 +1,5 @@
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::state::command::RenderPipelineCommandState;
-use crate::engine::render::pipeline::uniform::ModelViewProjection;
 use crate::engine::render::pipeline::{copy_buffer, create_buffer};
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
@@ -57,13 +56,19 @@ impl RenderPipelineAllocatorState {
         }
     }
 
-    pub fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
+    pub fn reset(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        uniform_buffer_size: vk::DeviceSize,
+    ) -> NeuclidioResult<()> {
         debug!(
             "Creating Vulkan uniform buffers for window with id: {:?}",
             neuclidio_window.id
         );
 
-        let uniform_buffers = Self::create_uniform_buffers(neuclidio_window, &self.allocator)?;
+        let uniform_buffers =
+            Self::create_uniform_buffers(neuclidio_window, &self.allocator, uniform_buffer_size)?;
+
         self.uniform_buffers = Some(uniform_buffers);
 
         Ok(())
@@ -184,14 +189,14 @@ impl RenderPipelineAllocatorState {
         mut uniform_buffer_filler: UBF,
     ) -> NeuclidioResult<()>
     where
-        UBF: FnMut(*mut u8),
+        UBF: FnMut(*mut u8) -> NeuclidioResult<()>,
     {
         let uniform_buffer = self.uniform_buffers()?[image_index];
 
         let uniform_buffer_memory: *mut u8 =
             unsafe { self.allocator.map_memory(uniform_buffer.1)? };
 
-        uniform_buffer_filler(uniform_buffer_memory);
+        uniform_buffer_filler(uniform_buffer_memory)?;
 
         unsafe {
             self.allocator.unmap_memory(uniform_buffer.1);
@@ -216,6 +221,7 @@ impl RenderPipelineAllocatorState {
     fn create_uniform_buffers(
         neuclidio_window: &NeuclidioWindow,
         allocator: &Allocator,
+        uniform_buffer_size: vk::DeviceSize,
     ) -> NeuclidioResult<Vec<(vk::Buffer, Allocation)>> {
         let swap_chain = neuclidio_window
             .swap_chain
@@ -226,7 +232,7 @@ impl RenderPipelineAllocatorState {
         for _ in 0..swap_chain.image_count() {
             let uniform_buffer = create_buffer(
                 allocator,
-                size_of::<ModelViewProjection>() as u64,
+                uniform_buffer_size,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 MemoryUsage::AutoPreferHost,
                 AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
