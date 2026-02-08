@@ -1,6 +1,6 @@
 use crate::component::mesh::Mesh;
 use crate::component::mesh::loader::error::MeshLoaderError;
-use crate::engine::render::pipeline::vertex::Vertex;
+use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::error::NeuclidioResult;
 use crate::id_generator::IdGenerator;
 use glam::{Vec2, Vec3};

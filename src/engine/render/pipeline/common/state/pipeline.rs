@@ -1,7 +1,7 @@
+use crate::engine::render::pipeline::common::state::allocator::RenderPipelineAllocatorState;
+use crate::engine::render::pipeline::common::state::descriptor::RenderPipelineDescriptorState;
+use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::engine::render::pipeline::error::RenderPipelineError;
-use crate::engine::render::pipeline::state::allocator::RenderPipelineAllocatorState;
-use crate::engine::render::pipeline::state::descriptor::RenderPipelineDescriptorState;
-use crate::engine::render::pipeline::vertex::Vertex;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;

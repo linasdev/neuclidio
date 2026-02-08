@@ -9,11 +9,8 @@ use vulkanalia_vma::{
 
 pub mod error;
 
-pub(crate) mod push_constant;
+pub(crate) mod common;
 pub(crate) mod standard;
-pub(crate) mod state;
-pub(crate) mod uniform;
-pub(crate) mod vertex;
 
 pub trait RenderPipelineExt {
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;

@@ -1,5 +1,5 @@
-use crate::engine::render::pipeline::push_constant::PushConstant;
-use crate::engine::render::pipeline::push_constant::model::ModelPushConstant;
+use crate::engine::render::pipeline::common::push_constant::PushConstant;
+use crate::engine::render::pipeline::common::push_constant::model::ModelPushConstant;
 use crate::entity::transform::TransformExt;
 use glam::{Mat4, Quat, Vec3};
 

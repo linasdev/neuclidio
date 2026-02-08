@@ -1,4 +1,4 @@
-use crate::engine::render::pipeline::push_constant::model::ModelPushConstant;
+use crate::engine::render::pipeline::common::push_constant::model::ModelPushConstant;
 
 pub mod model;
 

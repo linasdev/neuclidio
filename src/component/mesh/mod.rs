@@ -1,5 +1,5 @@
 use crate::component::{Component, ComponentExt};
-use crate::engine::render::pipeline::vertex::Vertex;
+use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableId};
 use std::slice;
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-use crate::engine::render::pipeline::push_constant::PushConstant;
+use crate::engine::render::pipeline::common::push_constant::PushConstant;
 use crate::entity::transform::euclidean::EuclideanTransform;
 
 pub mod euclidean;

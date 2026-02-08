@@ -1,4 +1,4 @@
-use crate::engine::render::pipeline::push_constant::{PushConstant, PushConstantExt};
+use crate::engine::render::pipeline::common::push_constant::{PushConstant, PushConstantExt};
 use glam::Mat4;
 use std::slice;
 use vulkanalia::vk;
