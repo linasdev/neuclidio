@@ -2,11 +2,13 @@ use crate::engine::Engine;
 use crate::engine::render::RenderEngine;
 use crate::engine::render::builder::RenderEngineBuilder;
 use crate::engine::render::windowing::error::WindowingError;
-use crate::error::NeuclidioResult;
+use crate::error::{NeuclidioError, NeuclidioResult};
 use bus::Bus;
+use std::sync::atomic::{AtomicBool, Ordering};
 use winit::event_loop::{ControlFlow, EventLoop};
 
 const DEFAULT_EVENT_BUS_SIZE: usize = 64;
+static ENGINE_CREATED: AtomicBool = AtomicBool::new(false);
 
 pub struct EngineBuilder {
     render_engine: Option<RenderEngine>,
@@ -38,6 +40,10 @@ impl EngineBuilder {
     }
 
     pub fn build(self) -> NeuclidioResult<Engine> {
+        if ENGINE_CREATED.fetch_or(true, Ordering::Relaxed) {
+            return Err(NeuclidioError::EngineAlreadyExists);
+        }
+
         let render_engine = match self.render_engine {
             Some(render_engine) => render_engine,
             None => RenderEngineBuilder::new().build()?,

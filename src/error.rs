@@ -6,6 +6,7 @@ pub type NeuclidioResult<T> = Result<T, NeuclidioError>;
 #[derive(Debug)]
 pub enum NeuclidioError {
     EventBusClosed,
+    EngineAlreadyExists,
     RenderError(RenderError),
     ComponentError(ComponentError),
 }
