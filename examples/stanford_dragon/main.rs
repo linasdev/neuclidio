@@ -29,8 +29,8 @@ fn main() {
             let mut entity = Entity::new_with_transform(Transform::Euclidean(
                 EuclideanTransform::default()
                     .with_position(Vec3::new(0.0, 0.0, -5.0 * i as f32))
-                    .with_scale(Vec3::ONE * 0.25 * (i as f32).powf(1.3),
-            )));
+                    .with_scale(Vec3::ONE * 0.25 * (i as f32).powf(1.3)),
+            ));
 
             entity.add_component(mesh.clone());
             entities.push(entity.clone());
