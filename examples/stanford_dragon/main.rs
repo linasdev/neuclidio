@@ -11,7 +11,7 @@ use winit::window::WindowAttributes;
 fn main() {
     env_logger::init();
 
-    let mesh = MeshLoader::load_mesh_from_file_wavefront("./examples/stanford_dragon/mesh.obj")
+    let mesh = MeshLoader::load_mesh_from_bytes_wavefront(include_bytes!("./mesh.obj"))
         .expect("Failed to load mesh");
 
     let mut neuclidio = EngineBuilder::new()

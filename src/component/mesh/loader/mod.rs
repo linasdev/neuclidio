@@ -6,7 +6,7 @@ use crate::id_generator::IdGenerator;
 use glam::{Vec2, Vec3};
 use obj::{Obj, load_obj};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,11 +15,19 @@ pub mod error;
 pub struct MeshLoader {}
 
 impl MeshLoader {
+    pub fn load_mesh_from_bytes_wavefront(mesh_bytes: &[u8]) -> NeuclidioResult<Mesh> {
+        let mesh = Self::load_mesh_from_buffer_reader_wavefront(BufReader::new(mesh_bytes))?;
+        Ok(mesh)
+    }
+
     pub fn load_mesh_from_file_wavefront(mesh_path: impl AsRef<Path>) -> NeuclidioResult<Mesh> {
         let mesh_file = File::open(mesh_path).map_err(MeshLoaderError::from)?;
+        let mesh = Self::load_mesh_from_buffer_reader_wavefront(BufReader::new(mesh_file))?;
+        Ok(mesh)
+    }
 
-        let input = BufReader::new(mesh_file);
-        let wavefront_object: Obj = load_obj(input).map_err(MeshLoaderError::from)?;
+    fn load_mesh_from_buffer_reader_wavefront<T: Read>(mesh_buffer_reader: BufReader<T>) -> NeuclidioResult<Mesh> {
+        let wavefront_object: Obj = load_obj(mesh_buffer_reader).map_err(MeshLoaderError::from)?;
 
         let vertices = wavefront_object
             .vertices
