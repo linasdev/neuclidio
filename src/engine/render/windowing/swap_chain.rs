@@ -3,12 +3,11 @@ use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use itertools::Itertools;
 use log::debug;
-use std::slice::Iter;
 use vulkanalia::vk::{
     DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtensionInstanceCommands,
     KhrSwapchainExtensionDeviceCommands,
 };
-use vulkanalia::{Device, Instance, vk};
+use vulkanalia::{Instance, vk};
 use winit::window::{Window, WindowId};
 
 pub struct SwapChain {
@@ -73,7 +72,7 @@ impl SwapChain {
 
             (chain, images)
         };
-        let image_views = Self::create_image_views(&logical_device, &images, image_format)?;
+        let image_views = Self::create_image_views(neuclidio_window, &images, image_format)?;
 
         let swap_chain = SwapChain {
             window_id: window.id(),
@@ -127,8 +126,8 @@ impl SwapChain {
         self.image_format
     }
 
-    pub fn image_views(&self) -> Iter<'_, vk::ImageView> {
-        self.image_views.iter()
+    pub fn image_views(&self) -> &[vk::ImageView] {
+        &self.image_views
     }
 
     fn get_image_count(
@@ -196,7 +195,7 @@ impl SwapChain {
     }
 
     fn create_image_views(
-        logical_device: &Device,
+        neuclidio_window: &NeuclidioWindow,
         images: &[vk::Image],
         image_format: vk::Format,
     ) -> NeuclidioResult<Vec<vk::ImageView>> {
@@ -216,14 +215,18 @@ impl SwapChain {
                 .base_array_layer(0)
                 .layer_count(1);
 
-            let info = vk::ImageViewCreateInfo::builder()
+            let image_view_create_info = vk::ImageViewCreateInfo::builder()
                 .image(*image)
                 .view_type(vk::ImageViewType::_2D)
                 .format(image_format)
                 .components(components)
                 .subresource_range(subresource_range);
 
-            let image_view = unsafe { logical_device.create_image_view(&info, None)? };
+            let image_view = unsafe {
+                neuclidio_window
+                    .logical_device
+                    .create_image_view(&image_view_create_info, None)?
+            };
 
             image_views.push(image_view);
         }

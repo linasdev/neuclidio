@@ -1,4 +1,5 @@
 use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::pipeline::state::allocator::RenderPipelineAllocatorState;
 use crate::engine::render::pipeline::state::descriptor::RenderPipelineDescriptorState;
 use crate::engine::render::pipeline::vertex::Vertex;
 use crate::engine::render::windowing::window::NeuclidioWindow;
@@ -19,6 +20,7 @@ impl RenderPipelineState {
     pub fn new(
         neuclidio_window: &NeuclidioWindow,
         descriptor_state: &RenderPipelineDescriptorState,
+        allocator_state: &RenderPipelineAllocatorState,
         push_constant_ranges: &[vk::PushConstantRange],
         vertex_shader_bytecode: &[u8],
         fragment_shader_bytecode: &[u8],
@@ -37,6 +39,7 @@ impl RenderPipelineState {
         let viewport_state = Self::create_viewport_state(neuclidio_window)?;
         let rasterization_state = Self::create_rasterization_state();
         let multisample_state = Self::create_multisample_state();
+        let depth_stencil_state = Self::create_depth_stencil_state();
         let color_blend_state = Self::create_color_blend_state();
 
         debug!(
@@ -55,7 +58,7 @@ impl RenderPipelineState {
             neuclidio_window.id
         );
 
-        let render_pass = Self::create_render_pass(neuclidio_window)?;
+        let render_pass = Self::create_render_pass(neuclidio_window, allocator_state)?;
 
         debug!(
             "Creating Vulkan pipeline for window with id: {:?}",
@@ -69,6 +72,7 @@ impl RenderPipelineState {
             .viewport_state(&viewport_state.0)
             .rasterization_state(&rasterization_state)
             .multisample_state(&multisample_state)
+            .depth_stencil_state(&depth_stencil_state)
             .color_blend_state(&color_blend_state.0)
             .layout(pipeline_layout)
             .render_pass(render_pass)
@@ -91,7 +95,8 @@ impl RenderPipelineState {
             neuclidio_window.id
         );
 
-        let frame_buffers = Self::create_frame_buffers(neuclidio_window, render_pass)?;
+        let frame_buffers =
+            Self::create_frame_buffers(neuclidio_window, allocator_state, render_pass)?;
 
         Ok(Self {
             pipeline,
@@ -281,6 +286,20 @@ impl RenderPipelineState {
             .build()
     }
 
+    fn create_depth_stencil_state() -> vk::PipelineDepthStencilStateCreateInfo {
+        vk::PipelineDepthStencilStateCreateInfo::builder()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS)
+            .depth_bounds_test_enable(false)
+            .min_depth_bounds(0.0)
+            .max_depth_bounds(1.0)
+            .stencil_test_enable(false)
+            .front(vk::StencilOpState::default())
+            .back(vk::StencilOpState::default())
+            .build()
+    }
+
     fn create_color_blend_state() -> (
         vk::PipelineColorBlendStateCreateInfo,
         Vec<vk::PipelineColorBlendAttachmentState>,
@@ -326,11 +345,15 @@ impl RenderPipelineState {
         Ok(pipeline_layout)
     }
 
-    fn create_render_pass(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<vk::RenderPass> {
+    fn create_render_pass(
+        neuclidio_window: &NeuclidioWindow,
+        allocator_state: &RenderPipelineAllocatorState,
+    ) -> NeuclidioResult<vk::RenderPass> {
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
+        let depth_stencil_image_format = allocator_state.depth_stencil_image_format()?;
 
         let color_attachment = vk::AttachmentDescription::builder()
             .format(swap_chain.image_format())
@@ -343,24 +366,59 @@ impl RenderPipelineState {
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
             .build();
 
+        let depth_stencil_attachment = vk::AttachmentDescription::builder()
+            .format(depth_stencil_image_format)
+            .samples(vk::SampleCountFlags::_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::CLEAR)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .build();
+
         let subpass = {
             let color_attachment_reference = vk::AttachmentReference::builder()
                 .attachment(0)
                 .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .build();
+            let depth_stencil_attachment_reference = vk::AttachmentReference::builder()
+                .attachment(1)
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .build();
 
             vk::SubpassDescription::builder()
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(&[color_attachment_reference])
+                .depth_stencil_attachment(&depth_stencil_attachment_reference)
                 .build()
         };
 
-        let attachments = vec![color_attachment];
-        let subpasses = vec![subpass];
+        let dependency = vk::SubpassDependency::builder()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            )
+            .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            .dst_stage_mask(
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            )
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            )
+            .build();
 
+        let attachments = vec![color_attachment, depth_stencil_attachment];
+        let subpasses = vec![subpass];
+        let dependencies = vec![dependency];
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
             .attachments(&attachments)
             .subpasses(&subpasses)
+            .dependencies(&dependencies)
             .build();
 
         let render_pass = unsafe {
@@ -374,19 +432,21 @@ impl RenderPipelineState {
 
     fn create_frame_buffers(
         neuclidio_window: &NeuclidioWindow,
+        allocator_state: &RenderPipelineAllocatorState,
         render_pass: vk::RenderPass,
     ) -> NeuclidioResult<Vec<vk::Framebuffer>> {
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
+        let depth_stencil_image_view = allocator_state.depth_stencil_image_view()?;
 
         let mut frame_buffers = Vec::with_capacity(swap_chain.image_count());
 
         for image_view in swap_chain.image_views() {
             let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(render_pass)
-                .attachments(&[*image_view])
+                .attachments(&[*image_view, depth_stencil_image_view])
                 .width(swap_chain.extent().width)
                 .height(swap_chain.extent().height)
                 .layers(1)

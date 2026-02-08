@@ -2,6 +2,8 @@ use crate::component::mesh::loader::MeshLoader;
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::RenderPipelineExt;
 use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::pipeline::push_constant::PushConstantExt;
+use crate::engine::render::pipeline::push_constant::model::ModelPushConstant;
 use crate::engine::render::pipeline::state::allocator::RenderPipelineAllocatorState;
 use crate::engine::render::pipeline::state::command::RenderPipelineCommandState;
 use crate::engine::render::pipeline::state::descriptor::RenderPipelineDescriptorState;
@@ -45,7 +47,6 @@ impl StandardRenderPipeline {}
 impl StandardRenderPipeline {
     pub fn new(
         neuclidio_window: &NeuclidioWindow,
-        physical_device: vk::PhysicalDevice,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
         let descriptor_state = RenderPipelineDescriptorState::new(
@@ -55,7 +56,7 @@ impl StandardRenderPipeline {
         let synchronization_state =
             RenderPipelineSynchronizationState::new(neuclidio_window, max_frames_in_flight)?;
         let command_state = RenderPipelineCommandState::new(neuclidio_window)?;
-        let allocator_state = RenderPipelineAllocatorState::new(neuclidio_window, physical_device)?;
+        let allocator_state = RenderPipelineAllocatorState::new(neuclidio_window)?;
         let renderable_entities = BTreeMap::new();
 
         Ok(Self {
@@ -206,11 +207,18 @@ impl StandardRenderPipeline {
             },
         };
 
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(pipeline_state.render_pass())
             .framebuffer(pipeline_state.frame_buffer(command_buffer_index))
             .render_area(render_area)
-            .clear_values(&[clear_value])
+            .clear_values(&[clear_value, depth_clear_value])
             .build();
 
         unsafe {
@@ -409,6 +417,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         self.pipeline_state = Some(RenderPipelineState::new(
             neuclidio_window,
             &self.descriptor_state,
+            &self.allocator_state,
             &[ModelPushConstant::push_constant_range()],
             VERTEX_SHADER_BYTECODE,
             FRAGMENT_SHADER_BYTECODE,

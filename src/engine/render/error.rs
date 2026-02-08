@@ -16,6 +16,7 @@ pub enum RenderError {
     MissingSwapChainSupport,
     MissingDeviceExtensions,
     MissingSurfaceFormat,
+    MissingImageFormat,
     MissingPresentMode,
     MissingValidationLayer,
     OutOfDateSwapChain,

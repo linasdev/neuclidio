@@ -1,3 +1,4 @@
+use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::state::command::RenderPipelineCommandState;
 use crate::engine::render::pipeline::{copy_buffer, create_buffer};
@@ -5,10 +6,17 @@ use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
 use vulkanalia::vk;
-use vulkanalia_vma::{Allocation, AllocationCreateFlags, Allocator, AllocatorOptions, MemoryUsage};
+use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
+use vulkanalia_vma::{
+    Alloc, Allocation, AllocationCreateFlags, AllocationOptions, Allocator, AllocatorOptions,
+    MemoryUsage,
+};
 
 pub struct RenderPipelineAllocatorState {
     allocator: Allocator,
+    depth_stencil_image_format: Option<vk::Format>,
+    depth_stencil_image: Option<(vk::Image, Allocation)>,
+    depth_stencil_image_view: Option<vk::ImageView>,
     render_buffer: Option<(vk::Buffer, Allocation)>,
     uniform_buffers: Option<Vec<(vk::Buffer, Allocation)>>,
 }
@@ -29,26 +37,51 @@ impl RenderPipelineAllocatorState {
 
         Ok(Self {
             allocator,
+            depth_stencil_image_format: None,
+            depth_stencil_image: None,
+            depth_stencil_image_view: None,
             render_buffer: None,
             uniform_buffers: None,
         })
     }
 
     pub fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow) {
-        let uniform_buffers = match self.uniform_buffers.take() {
-            Some(uniform_buffers) => uniform_buffers,
-            None => return,
-        };
+        if let Some(uniform_buffers) = self.uniform_buffers.take() {
+            debug!(
+                "Destroying Vulkan uniform buffers for window with id: {:?}",
+                neuclidio_window.id
+            );
 
-        debug!(
-            "Destroying Vulkan uniform buffers for window with id: {:?}",
-            neuclidio_window.id
-        );
+            for uniform_buffer in uniform_buffers.iter() {
+                unsafe {
+                    self.allocator
+                        .destroy_buffer(uniform_buffer.0, uniform_buffer.1);
+                }
+            }
+        }
 
-        for uniform_buffer in uniform_buffers.iter() {
+        if let Some(depth_stencil_image_view) = self.depth_stencil_image_view.take() {
+            debug!(
+                "Destroying Vulkan depth image view for window with id: {:?}",
+                neuclidio_window.id
+            );
+
+            unsafe {
+                neuclidio_window
+                    .logical_device
+                    .destroy_image_view(depth_stencil_image_view, None);
+            }
+        }
+
+        if let Some(depth_stencil_image) = self.depth_stencil_image.take() {
+            debug!(
+                "Destroying Vulkan depth image for window with id: {:?}",
+                neuclidio_window.id
+            );
+
             unsafe {
                 self.allocator
-                    .destroy_buffer(uniform_buffer.0, uniform_buffer.1);
+                    .destroy_image(depth_stencil_image.0, depth_stencil_image.1);
             }
         }
     }
@@ -59,6 +92,33 @@ impl RenderPipelineAllocatorState {
         uniform_buffer_size: vk::DeviceSize,
     ) -> NeuclidioResult<()> {
         debug!(
+            "Creating Vulkan depth image for window with id: {:?}",
+            neuclidio_window.id
+        );
+
+        let depth_stencil_image_format = Self::get_image_format(
+            neuclidio_window,
+            vk::ImageTiling::OPTIMAL,
+            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+            &[
+                vk::Format::D32_SFLOAT_S8_UINT,
+                vk::Format::D24_UNORM_S8_UINT,
+            ],
+        )?;
+        let depth_stencil_image = Self::create_depth_stencil_image(
+            neuclidio_window,
+            &self.allocator,
+            depth_stencil_image_format,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        )?;
+        let depth_stencil_image_view = Self::create_depth_stencil_image_view(
+            neuclidio_window,
+            depth_stencil_image.0,
+            depth_stencil_image_format,
+        )?;
+
+        debug!(
             "Creating Vulkan uniform buffers for window with id: {:?}",
             neuclidio_window.id
         );
@@ -66,6 +126,9 @@ impl RenderPipelineAllocatorState {
         let uniform_buffers =
             Self::create_uniform_buffers(neuclidio_window, &self.allocator, uniform_buffer_size)?;
 
+        self.depth_stencil_image_format = Some(depth_stencil_image_format);
+        self.depth_stencil_image = Some(depth_stencil_image);
+        self.depth_stencil_image_view = Some(depth_stencil_image_view);
         self.uniform_buffers = Some(uniform_buffers);
 
         Ok(())
@@ -95,6 +158,31 @@ impl RenderPipelineAllocatorState {
                     self.allocator
                         .destroy_buffer(uniform_buffer.0, uniform_buffer.1);
                 }
+            }
+        }
+
+        if let Some(depth_stencil_image_view) = self.depth_stencil_image_view.take() {
+            debug!(
+                "Destroying Vulkan depth image view for window with id: {:?}",
+                neuclidio_window.id
+            );
+
+            unsafe {
+                neuclidio_window
+                    .logical_device
+                    .destroy_image_view(depth_stencil_image_view, None);
+            }
+        }
+
+        if let Some(depth_stencil_image) = self.depth_stencil_image.take() {
+            debug!(
+                "Destroying Vulkan depth image for window with id: {:?}",
+                neuclidio_window.id
+            );
+
+            unsafe {
+                self.allocator
+                    .destroy_image(depth_stencil_image.0, depth_stencil_image.1);
             }
         }
 
@@ -204,6 +292,16 @@ impl RenderPipelineAllocatorState {
         Ok(())
     }
 
+    pub fn depth_stencil_image_format(&self) -> NeuclidioResult<vk::Format> {
+        self.depth_stencil_image_format
+            .ok_or(RenderPipelineError::Unprepared.into())
+    }
+
+    pub fn depth_stencil_image_view(&self) -> NeuclidioResult<vk::ImageView> {
+        self.depth_stencil_image_view
+            .ok_or(RenderPipelineError::Unprepared.into())
+    }
+
     pub fn render_buffer(&self) -> Option<vk::Buffer> {
         self.render_buffer.map(|render_buffer| render_buffer.0)
     }
@@ -239,5 +337,107 @@ impl RenderPipelineAllocatorState {
         }
 
         Ok(uniform_buffers)
+    }
+
+    fn get_image_format(
+        neuclidio_window: &NeuclidioWindow,
+        image_tiling: vk::ImageTiling,
+        format_features: vk::FormatFeatureFlags,
+        preferred_formats: &[vk::Format],
+    ) -> NeuclidioResult<vk::Format> {
+        for preferred_format in preferred_formats.iter() {
+            let properties = unsafe {
+                neuclidio_window
+                    .instance
+                    .get_physical_device_format_properties(
+                        neuclidio_window.physical_device,
+                        *preferred_format,
+                    )
+            };
+
+            match image_tiling {
+                vk::ImageTiling::LINEAR => {
+                    if properties.linear_tiling_features.contains(format_features) {
+                        return Ok(*preferred_format);
+                    }
+                }
+                vk::ImageTiling::OPTIMAL => {
+                    if properties.optimal_tiling_features.contains(format_features) {
+                        return Ok(*preferred_format);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Err(RenderError::MissingImageFormat.into())
+    }
+
+    fn create_depth_stencil_image(
+        neuclidio_window: &NeuclidioWindow,
+        allocator: &Allocator,
+        image_format: vk::Format,
+        image_tiling: vk::ImageTiling,
+        image_usage: vk::ImageUsageFlags,
+    ) -> NeuclidioResult<(vk::Image, Allocation)> {
+        let swap_chain = neuclidio_window
+            .swap_chain
+            .as_ref()
+            .ok_or(RenderPipelineError::Unprepared)?;
+
+        let image_extent = vk::Extent3D::builder()
+            .width(swap_chain.extent().width)
+            .height(swap_chain.extent().height)
+            .depth(1)
+            .build();
+
+        let image_create_info = vk::ImageCreateInfo::builder()
+            .flags(vk::ImageCreateFlags::empty())
+            .image_type(vk::ImageType::_2D)
+            .format(image_format)
+            .extent(image_extent)
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::_1)
+            .tiling(image_tiling)
+            .usage(image_usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .build();
+
+        let mut allocation_options = AllocationOptions::default();
+        allocation_options.usage = MemoryUsage::AutoPreferDevice;
+
+        let depth_stencil_image =
+            unsafe { allocator.create_image(image_create_info, &allocation_options)? };
+
+        Ok(depth_stencil_image)
+    }
+
+    fn create_depth_stencil_image_view(
+        neuclidio_window: &NeuclidioWindow,
+        image: vk::Image,
+        image_format: vk::Format,
+    ) -> NeuclidioResult<vk::ImageView> {
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+            .base_mip_level(0)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1);
+
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .image(image)
+            .view_type(vk::ImageViewType::_2D)
+            .format(image_format)
+            .subresource_range(subresource_range);
+
+        let depth_stencil_image_view = unsafe {
+            neuclidio_window
+                .logical_device
+                .create_image_view(&image_view_create_info, None)?
+        };
+
+        Ok(depth_stencil_image_view)
     }
 }
