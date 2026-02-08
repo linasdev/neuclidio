@@ -73,6 +73,7 @@ impl RenderEngineWindowManager {
             logical_device,
             queue_family_indices,
             swap_chain_support,
+            physical_device,
             surface,
             graphics_queue,
             present_queue,
@@ -83,7 +84,6 @@ impl RenderEngineWindowManager {
 
         let pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
             &neuclidio_window,
-            physical_device,
             3, // TODO: Make this configurable
         )?));
 

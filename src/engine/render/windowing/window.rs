@@ -14,6 +14,7 @@ pub struct NeuclidioWindow {
     pub logical_device: Device,
     pub queue_family_indices: QueueFamilyIndices,
     pub swap_chain_support: SwapChainSupport,
+    pub physical_device: vk::PhysicalDevice,
     pub surface: vk::SurfaceKHR,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,

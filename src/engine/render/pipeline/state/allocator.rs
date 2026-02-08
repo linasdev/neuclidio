@@ -14,10 +14,7 @@ pub struct RenderPipelineAllocatorState {
 }
 
 impl RenderPipelineAllocatorState {
-    pub fn new(
-        neuclidio_window: &NeuclidioWindow,
-        physical_device: vk::PhysicalDevice,
-    ) -> NeuclidioResult<Self> {
+    pub fn new(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<Self> {
         debug!(
             "Creating Vulkan Memory Allocator for window with id: {:?}",
             neuclidio_window.id
@@ -26,7 +23,7 @@ impl RenderPipelineAllocatorState {
         let allocator_options = AllocatorOptions::new(
             &neuclidio_window.instance,
             &neuclidio_window.logical_device,
-            physical_device,
+            neuclidio_window.physical_device,
         );
         let allocator = unsafe { Allocator::new(&allocator_options)? };
 
