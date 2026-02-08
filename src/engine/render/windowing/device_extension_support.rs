@@ -12,12 +12,12 @@ impl DeviceExtensionSupport {
         physical_device: vk::PhysicalDevice,
         required_extensions: &[vk::ExtensionName],
     ) -> NeuclidioResult<()> {
-        let extensions = unsafe {
+        let extensions: HashSet<_> = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device, None)?
                 .iter()
                 .map(|e| e.extension_name)
-                .collect::<HashSet<_>>()
+                .collect()
         };
 
         if required_extensions.iter().all(|e| extensions.contains(e)) {

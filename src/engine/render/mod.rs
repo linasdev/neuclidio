@@ -1,4 +1,5 @@
 use crate::engine::render::windowing::window_manager::RenderEngineWindowManager;
+use crate::entity::Entity;
 use crate::error::NeuclidioResult;
 use winit::window::{Window, WindowId};
 
@@ -32,5 +33,17 @@ impl RenderEngine {
 
     pub(crate) fn clean_up_for_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
         self.window_manager.cleanup_for_window(window_id)
+    }
+
+    pub(crate) fn submit_entity(
+        &mut self,
+        window_id: WindowId,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        self.window_manager.submit_entity(window_id, entity)
+    }
+
+    pub(crate) fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+        self.window_manager.remove_entity(entity)
     }
 }

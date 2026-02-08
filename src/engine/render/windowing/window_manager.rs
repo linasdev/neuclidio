@@ -5,6 +5,7 @@ use crate::engine::render::windowing::device_extension_support::DeviceExtensionS
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
 use crate::engine::render::windowing::window::NeuclidioWindow;
+use crate::entity::Entity;
 use crate::error::{NeuclidioError, NeuclidioResult};
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
@@ -171,7 +172,7 @@ impl RenderEngineWindowManager {
         let neuclidio_window = match self.windows.get_mut(&window_id) {
             Some(window_data) => window_data,
             None => {
-                debug!(
+                warn!(
                     "Tried to destroy pipeline without Vulkan prepared for window with id: {window_id:?}"
                 );
                 return Ok(());
@@ -191,6 +192,43 @@ impl RenderEngineWindowManager {
         }
 
         self.windows.remove(&window_id);
+
+        Ok(())
+    }
+
+    pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
+        let neuclidio_window = match self.windows.get(&window_id) {
+            Some(window_data) => window_data,
+            None => {
+                warn!(
+                    "Tried to submit entity for render without Vulkan prepared for window with id: {window_id:?}"
+                );
+                return Ok(());
+            }
+        };
+        let pipeline = match self.pipelines.get_mut(&window_id) {
+            Some(pipeline) => pipeline,
+            None => {
+                warn!(
+                    "Tried to submit entity for render without Vulkan prepared for window with id: {window_id:?}"
+                );
+                return Ok(());
+            }
+        };
+
+        pipeline.submit_entity(neuclidio_window, entity)?;
+
+        Ok(())
+    }
+
+    pub fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+        let window_ids: Vec<WindowId> = self.windows.keys().cloned().collect();
+
+        for window_id in window_ids.iter() {
+            let neuclidio_window = self.windows.get_mut(&window_id).unwrap();
+            let pipeline = self.pipelines.get_mut(&window_id).unwrap();
+            pipeline.remove_entity(neuclidio_window, entity)?;
+        }
 
         Ok(())
     }
@@ -217,10 +255,10 @@ impl RenderEngineWindowManager {
             vec![]
         };
 
-        let mut extensions = vk_window::get_required_instance_extensions(window)
+        let mut extensions: Vec<_> = vk_window::get_required_instance_extensions(window)
             .iter()
             .map(|e| e.as_ptr())
-            .collect::<Vec<_>>();
+            .collect();
 
         // Required by Vulkan SDK on macOS since 1.3.216.
         let flags = if cfg!(target_os = "macos")

@@ -1,13 +1,16 @@
 use crate::engine::proxy::EngineProxy;
+use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::RenderEngine;
 use crate::engine::render::windowing::error::WindowingError;
 use crate::engine::thread::EngineThread;
+use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
 use crate::event::Event;
 use bus::Bus;
 use log::{error, info, warn};
 use render::windowing::event::WindowingEvent;
 use std::collections::HashMap;
+use std::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -22,11 +25,17 @@ pub struct Engine {
     render_engine: RenderEngine,
     event_bus: Bus<Event>,
     event_loop: EventLoop<WindowingEvent>,
+    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
+    proxy_request_receiver: mpsc::Receiver<EngineProxyRequest>,
 }
 
 impl Engine {
     pub fn proxy(&mut self) -> EngineProxy {
-        EngineProxy::new(self.event_bus.add_rx(), self.event_loop.create_proxy())
+        EngineProxy::new(
+            self.event_bus.add_rx(),
+            self.event_loop.create_proxy(),
+            self.proxy_request_sender.clone(),
+        )
     }
 
     pub fn thread<F, T>(&mut self, f: F) -> EngineThread<T>
@@ -43,7 +52,10 @@ impl Engine {
             .run_app(&mut EngineApp {
                 render_engine: self.render_engine,
                 event_bus: self.event_bus,
+                proxy_request_sender: self.proxy_request_sender,
+                proxy_request_receiver: self.proxy_request_receiver,
                 windows: HashMap::new(),
+                entities: HashMap::new(),
             })
             .map_err(WindowingError::from)?;
 
@@ -54,7 +66,10 @@ impl Engine {
 struct EngineApp {
     render_engine: RenderEngine,
     event_bus: Bus<Event>,
+    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
+    proxy_request_receiver: mpsc::Receiver<EngineProxyRequest>,
     windows: HashMap<WindowId, Window>,
+    entities: HashMap<EntityId, Entity>,
 }
 
 impl ApplicationHandler<WindowingEvent> for EngineApp {
@@ -144,6 +159,48 @@ impl ApplicationHandler<WindowingEvent> for EngineApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        match self.proxy_request_receiver.try_recv() {
+            Ok(request) => match request {
+                EngineProxyRequest::AddEntity(window_id, entity) => {
+                    let entity_id = entity.id();
+                    if self.entities.get(&entity_id).is_none() {
+                        if let Err(err) = self.render_engine.submit_entity(window_id, &entity) {
+                            warn!(
+                                "Failed to add entity with id '{entity_id:?}' to window with id '{window_id:?}' with error: {err:?}"
+                            );
+                        }
+
+                        self.entities.insert(entity_id, entity);
+                    }
+                }
+                EngineProxyRequest::RemoveEntity(entity) => {
+                    let entity_id = entity.id();
+                    if let Some(entity) = self.entities.remove(&entity_id) {
+                        if let Err(err) = self.render_engine.remove_entity(&entity) {
+                            warn!(
+                                "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
+                            );
+                        }
+                    }
+                }
+                EngineProxyRequest::RemoveEntityById(entity_id) => {
+                    if let Some(entity) = self.entities.remove(&entity_id) {
+                        if let Err(err) = self.render_engine.remove_entity(&entity) {
+                            warn!(
+                                "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
+                            );
+                        }
+
+                        self.entities.remove(&entity_id);
+                    }
+                }
+            },
+            Err(mpsc::TryRecvError::Disconnected) => {
+                panic!("Neuclidio engine proxy request channel closed");
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 if let Err(err) = self.render_engine.clean_up_for_window(window_id) {

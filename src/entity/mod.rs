@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 pub mod transform;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug)]
 pub struct EntityId(pub(crate) u64);
 
 #[derive(Clone)]

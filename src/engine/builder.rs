@@ -5,6 +5,7 @@ use crate::engine::render::windowing::error::WindowingError;
 use crate::error::{NeuclidioError, NeuclidioResult};
 use bus::Bus;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 const DEFAULT_EVENT_BUS_SIZE: usize = 64;
@@ -56,10 +57,14 @@ impl EngineBuilder {
             .map_err(WindowingError::from)?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
+        let (proxy_request_sender, proxy_request_receiver) = mpsc::channel();
+
         Ok(Engine {
             render_engine,
             event_bus,
             event_loop,
+            proxy_request_sender,
+            proxy_request_receiver,
         })
     }
 }

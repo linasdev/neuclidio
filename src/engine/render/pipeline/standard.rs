@@ -1,4 +1,3 @@
-use crate::component::mesh::loader::MeshLoader;
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::RenderPipelineExt;
 use crate::engine::render::pipeline::common::push_constant::PushConstantExt;
@@ -12,13 +11,11 @@ use crate::engine::render::pipeline::common::uniform::ViewProjectionUniform;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::renderable::{Renderable, RenderableExt};
 use crate::engine::render::windowing::window::NeuclidioWindow;
-use crate::entity::transform::euclidean::EuclideanTransform;
-use crate::entity::transform::{Transform, TransformExt};
+use crate::entity::transform::TransformExt;
 use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
-use glam::{Mat4, Quat, Vec3};
+use glam::Mat4;
 use std::collections::BTreeMap;
-use std::time::Instant;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSwapchainExtensionDeviceCommands};
 
@@ -67,72 +64,6 @@ impl StandardRenderPipeline {
             allocator_state,
             renderable_entities,
         })
-    }
-
-    pub fn submit_entity(
-        &mut self,
-        neuclidio_window: &NeuclidioWindow,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
-        let mut renderables_changed = false;
-        let renderables = entity.get_renderables();
-        for renderable in renderables.into_iter() {
-            if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
-                entities.insert(entity.id(), entity.clone());
-            } else {
-                let mut entities = BTreeMap::new();
-                entities.insert(entity.id(), entity.clone());
-                self.renderable_entities.insert(renderable, entities);
-                renderables_changed = true;
-            }
-        }
-
-        if renderables_changed {
-            self.allocator_state.fill_render_buffer(
-                neuclidio_window,
-                &self.command_state,
-                self.render_buffer_size(),
-                |render_buffer_memory| {
-                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-                },
-            )?;
-        }
-
-        Ok(())
-    }
-
-    pub fn remove_entity(
-        &mut self,
-        neuclidio_window: &NeuclidioWindow,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
-        let mut renderables_changed = false;
-        let renderables = entity.get_renderables();
-        for renderable in renderables.into_iter() {
-            if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
-                entities.remove(&entity.id());
-            }
-
-            if let Some(entities) = self.renderable_entities.get(&renderable)
-                && entities.is_empty()
-            {
-                self.renderable_entities.remove(&renderable);
-                renderables_changed = true;
-            }
-        }
-
-        if renderables_changed {
-            self.allocator_state.fill_render_buffer(
-                neuclidio_window,
-                &self.command_state,
-                self.render_buffer_size(),
-                |render_buffer_memory| {
-                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-                },
-            )?;
-        }
-
-        Ok(())
     }
 
     fn render_buffer_size(&self) -> vk::DeviceSize {
@@ -298,6 +229,72 @@ impl StandardRenderPipeline {
 }
 
 impl RenderPipelineExt for StandardRenderPipeline {
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        let mut renderables_changed = false;
+        let renderables = entity.get_renderables();
+        for renderable in renderables.into_iter() {
+            if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
+                entities.insert(entity.id(), entity.clone());
+            } else {
+                let mut entities = BTreeMap::new();
+                entities.insert(entity.id(), entity.clone());
+                self.renderable_entities.insert(renderable, entities);
+                renderables_changed = true;
+            }
+        }
+
+        if renderables_changed {
+            self.allocator_state.fill_render_buffer(
+                neuclidio_window,
+                &self.command_state,
+                self.render_buffer_size(),
+                |render_buffer_memory| {
+                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn remove_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        let mut renderables_changed = false;
+        let renderables = entity.get_renderables();
+        for renderable in renderables.into_iter() {
+            if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
+                entities.remove(&entity.id());
+            }
+
+            if let Some(entities) = self.renderable_entities.get(&renderable)
+                && entities.is_empty()
+            {
+                self.renderable_entities.remove(&renderable);
+                renderables_changed = true;
+            }
+        }
+
+        if renderables_changed {
+            self.allocator_state.fill_render_buffer(
+                neuclidio_window,
+                &self.command_state,
+                self.render_buffer_size(),
+                |render_buffer_memory| {
+                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
         let logical_device = &neuclidio_window.logical_device;
         let swap_chain = neuclidio_window

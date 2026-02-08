@@ -1,5 +1,7 @@
+use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::windowing::error::WindowingError;
 use crate::engine::render::windowing::event::*;
+use crate::entity::{Entity, EntityId};
 use crate::error::{NeuclidioError, NeuclidioResult};
 use crate::event::Event;
 use bus::BusReader;
@@ -8,20 +10,37 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use winit::event_loop::EventLoopProxy;
 use winit::window::{WindowAttributes, WindowId};
 
+pub mod request;
+
 pub struct EngineProxy {
     event_bus_reader: BusReader<Event>,
     event_loop_proxy: EventLoopProxy<WindowingEvent>,
+    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
 }
 
 impl EngineProxy {
     pub(crate) fn new(
         event_bus_reader: BusReader<Event>,
         event_loop_proxy: EventLoopProxy<WindowingEvent>,
+        proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
     ) -> Self {
         Self {
             event_bus_reader,
             event_loop_proxy,
+            proxy_request_sender,
         }
+    }
+
+    pub fn add_entity(&self, window_id: WindowId, entity: Entity) {
+        self.send_proxy_request(EngineProxyRequest::AddEntity(window_id, entity))
+    }
+
+    pub fn remove_entity(&self, entity: Entity) {
+        self.send_proxy_request(EngineProxyRequest::RemoveEntity(entity))
+    }
+
+    pub fn remove_entity_by_id(&self, entity_id: EntityId) {
+        self.send_proxy_request(EngineProxyRequest::RemoveEntityById(entity_id))
     }
 
     pub fn poll_for_event(&mut self) -> NeuclidioResult<Option<Event>> {
@@ -72,5 +91,11 @@ impl EngineProxy {
         self.close_window(window_id)?
             .recv()
             .map_err(|_| WindowingError::ChannelClosed)?
+    }
+
+    fn send_proxy_request(&self, event_proxy_request: EngineProxyRequest) {
+        if self.proxy_request_sender.send(event_proxy_request).is_err() {
+            panic!("Neuclidio engine proxy request channel closed");
+        }
     }
 }

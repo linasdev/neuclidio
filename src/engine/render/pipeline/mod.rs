@@ -1,5 +1,6 @@
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::windowing::window::NeuclidioWindow;
+use crate::entity::Entity;
 use crate::error::NeuclidioResult;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
@@ -13,6 +14,16 @@ pub(crate) mod common;
 pub(crate) mod standard;
 
 pub trait RenderPipelineExt {
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()>;
+    fn remove_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()>;
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
     fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow);
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
@@ -24,6 +35,26 @@ pub enum RenderPipeline {
 }
 
 impl RenderPipelineExt for RenderPipeline {
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        match self {
+            RenderPipeline::Standard(pipeline) => pipeline.submit_entity(neuclidio_window, entity),
+        }
+    }
+
+    fn remove_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        match self {
+            RenderPipeline::Standard(pipeline) => pipeline.remove_entity(neuclidio_window, entity),
+        }
+    }
+
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
         match self {
             RenderPipeline::Standard(pipeline) => pipeline.render(neuclidio_window),

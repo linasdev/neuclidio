@@ -31,4 +31,4 @@ default = []
 
 [[example]]
 name = "triangle"
-path = "examples/triangle.rs"
+path = "examples/stanford_dragon/main.rs"
