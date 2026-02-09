@@ -67,10 +67,7 @@ impl EngineProxy {
         self.send_proxy_request(EngineProxyRequest::RemoveEntityById(entity_id))
     }
 
-    pub fn add_window(
-        &self,
-        window_attributes: WindowAttributes,
-    ) -> AddWindowResult {
+    pub fn add_window(&self, window_attributes: WindowAttributes) -> AddWindowResult {
         let (sender, receiver) = mpsc::channel();
         self.event_loop_proxy
             .send_event(WindowingEvent::AddWindow(window_attributes, sender))

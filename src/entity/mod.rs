@@ -1,8 +1,8 @@
-use std::ops::DerefMut;
 use crate::component::{Component, ComponentExt};
 use crate::engine::render::renderable::Renderable;
 use crate::entity::transform::{Transform, TransformExt};
 use crate::id_generator::IdGenerator;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 pub mod transform;

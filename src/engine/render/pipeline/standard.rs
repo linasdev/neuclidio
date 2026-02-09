@@ -229,10 +229,7 @@ impl StandardRenderPipeline {
 }
 
 impl RenderPipelineExt for StandardRenderPipeline {
-    fn submit_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
+    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
         let mut renderables_changed = false;
         let renderables = entity.get_renderables();
         for renderable in renderables.into_iter() {
@@ -253,10 +250,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         Ok(())
     }
 
-    fn remove_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
+    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
         let mut renderables_changed = false;
         let renderables = entity.get_renderables();
         for renderable in renderables.into_iter() {

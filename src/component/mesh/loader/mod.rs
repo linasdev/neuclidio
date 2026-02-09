@@ -26,7 +26,9 @@ impl MeshLoader {
         Ok(mesh)
     }
 
-    fn load_mesh_from_buffer_reader_wavefront<T: Read>(mesh_buffer_reader: BufReader<T>) -> NeuclidioResult<Mesh> {
+    fn load_mesh_from_buffer_reader_wavefront<T: Read>(
+        mesh_buffer_reader: BufReader<T>,
+    ) -> NeuclidioResult<Mesh> {
         let wavefront_object: Obj = load_obj(mesh_buffer_reader).map_err(MeshLoaderError::from)?;
 
         let vertices = wavefront_object

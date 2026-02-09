@@ -14,14 +14,8 @@ pub(crate) mod common;
 pub(crate) mod standard;
 
 pub trait RenderPipelineExt {
-    fn submit_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()>;
-    fn remove_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()>;
+    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
+    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
     fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow);
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
@@ -33,19 +27,13 @@ pub enum RenderPipeline {
 }
 
 impl RenderPipelineExt for RenderPipeline {
-    fn submit_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
+    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
         match self {
             RenderPipeline::Standard(pipeline) => pipeline.submit_entity(entity),
         }
     }
 
-    fn remove_entity(
-        &mut self,
-        entity: &Entity,
-    ) -> NeuclidioResult<()> {
+    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
         match self {
             RenderPipeline::Standard(pipeline) => pipeline.remove_entity(entity),
         }
