@@ -166,7 +166,7 @@ impl StandardRenderPipeline {
             );
         }
 
-        if let Some(render_buffer) = allocator_state.render_buffer() {
+        if let Some(render_buffer) = allocator_state.render_buffer(command_buffer_index) {
             let mut current_render_buffer_offset = 0;
             for (renderable, entities_with_renderable) in renderable_entities.iter() {
                 unsafe {
@@ -231,7 +231,6 @@ impl StandardRenderPipeline {
 impl RenderPipelineExt for StandardRenderPipeline {
     fn submit_entity(
         &mut self,
-        neuclidio_window: &NeuclidioWindow,
         entity: &Entity,
     ) -> NeuclidioResult<()> {
         let mut renderables_changed = false;
@@ -248,14 +247,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         }
 
         if renderables_changed {
-            self.allocator_state.fill_render_buffer(
-                neuclidio_window,
-                &self.command_state,
-                self.render_buffer_size(),
-                |render_buffer_memory| {
-                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-                },
-            )?;
+            self.allocator_state.mark_render_buffers_as_stale();
         }
 
         Ok(())
@@ -263,7 +255,6 @@ impl RenderPipelineExt for StandardRenderPipeline {
 
     fn remove_entity(
         &mut self,
-        neuclidio_window: &NeuclidioWindow,
         entity: &Entity,
     ) -> NeuclidioResult<()> {
         let mut renderables_changed = false;
@@ -282,14 +273,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         }
 
         if renderables_changed {
-            self.allocator_state.fill_render_buffer(
-                neuclidio_window,
-                &self.command_state,
-                self.render_buffer_size(),
-                |render_buffer_memory| {
-                    Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-                },
-            )?;
+            self.allocator_state.mark_render_buffers_as_stale();
         }
 
         Ok(())
@@ -328,6 +312,15 @@ impl RenderPipelineExt for StandardRenderPipeline {
         self.synchronization_state
             .set_image_in_flight_to_current_in_flight_fence(image_index)?;
 
+        self.allocator_state.fill_render_buffer(
+            neuclidio_window,
+            image_index,
+            &self.command_state,
+            self.render_buffer_size(),
+            |render_buffer_memory| {
+                Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
+            },
+        )?;
         self.command_state.record_command_buffer(
             neuclidio_window,
             image_index,

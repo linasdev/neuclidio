@@ -4,7 +4,7 @@ use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::{copy_buffer, create_buffer};
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
-use log::debug;
+use log::{debug, warn};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
 use vulkanalia_vma::{
@@ -17,7 +17,8 @@ pub struct RenderPipelineAllocatorState {
     depth_stencil_image_format: Option<vk::Format>,
     depth_stencil_image: Option<(vk::Image, Allocation)>,
     depth_stencil_image_view: Option<vk::ImageView>,
-    render_buffer: Option<(vk::Buffer, Allocation)>,
+    render_buffers: Option<Vec<Option<(vk::Buffer, Allocation)>>>,
+    render_buffer_stale_state: Option<Vec<bool>>,
     uniform_buffers: Option<Vec<(vk::Buffer, Allocation)>>,
 }
 
@@ -40,12 +41,28 @@ impl RenderPipelineAllocatorState {
             depth_stencil_image_format: None,
             depth_stencil_image: None,
             depth_stencil_image_view: None,
-            render_buffer: None,
+            render_buffers: None,
+            render_buffer_stale_state: None,
             uniform_buffers: None,
         })
     }
 
     pub fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow) {
+        if let Some(render_buffers) = self.render_buffers.take() {
+            debug!(
+                "Destroying Vulkan render buffers for window with id: {:?}",
+                neuclidio_window.id
+            );
+            for render_buffer in render_buffers.iter() {
+                if let Some(render_buffer) = render_buffer {
+                    unsafe {
+                        self.allocator
+                            .destroy_buffer(render_buffer.0, render_buffer.1);
+                    }
+                }
+            }
+        }
+
         if let Some(uniform_buffers) = self.uniform_buffers.take() {
             debug!(
                 "Destroying Vulkan uniform buffers for window with id: {:?}",
@@ -118,6 +135,9 @@ impl RenderPipelineAllocatorState {
             depth_stencil_image_format,
         )?;
 
+        let (render_buffers, render_buffer_stale_state) =
+            Self::create_render_buffers(neuclidio_window)?;
+
         debug!(
             "Creating Vulkan uniform buffers for window with id: {:?}",
             neuclidio_window.id
@@ -129,21 +149,26 @@ impl RenderPipelineAllocatorState {
         self.depth_stencil_image_format = Some(depth_stencil_image_format);
         self.depth_stencil_image = Some(depth_stencil_image);
         self.depth_stencil_image_view = Some(depth_stencil_image_view);
+        self.render_buffers = Some(render_buffers);
+        self.render_buffer_stale_state = Some(render_buffer_stale_state);
         self.uniform_buffers = Some(uniform_buffers);
 
         Ok(())
     }
 
     pub fn destroy(mut self, neuclidio_window: &NeuclidioWindow) {
-        if let Some(render_buffer) = self.render_buffer.take() {
+        if let Some(render_buffers) = self.render_buffers.take() {
             debug!(
-                "Destroying Vulkan render buffer for window with id: {:?}",
+                "Destroying Vulkan render buffers for window with id: {:?}",
                 neuclidio_window.id
             );
-
-            unsafe {
-                self.allocator
-                    .destroy_buffer(render_buffer.0, render_buffer.1);
+            for render_buffer in render_buffers.iter() {
+                if let Some(render_buffer) = render_buffer {
+                    unsafe {
+                        self.allocator
+                            .destroy_buffer(render_buffer.0, render_buffer.1);
+                    }
+                }
             }
         }
 
@@ -194,9 +219,18 @@ impl RenderPipelineAllocatorState {
         drop(self.allocator);
     }
 
+    pub fn mark_render_buffers_as_stale(&mut self) {
+        if let Some(render_buffer_stale_state) = self.render_buffer_stale_state.as_mut() {
+            for is_stale in render_buffer_stale_state.iter_mut() {
+                *is_stale = true;
+            }
+        }
+    }
+
     pub fn fill_render_buffer<RBF>(
         &mut self,
         neuclidio_window: &NeuclidioWindow,
+        render_buffer_index: usize,
         command_state: &RenderPipelineCommandState,
         render_buffer_size: vk::DeviceSize,
         mut render_buffer_filler: RBF,
@@ -204,7 +238,37 @@ impl RenderPipelineAllocatorState {
     where
         RBF: FnMut(*mut u8),
     {
-        if let Some(render_buffer) = self.render_buffer.take() {
+        if render_buffer_size == 0 {
+            return Ok(());
+        }
+
+        match self.render_buffer_stale_state.as_ref() {
+            Some(render_buffer_stale_state) => {
+                if let Some(is_stale) = render_buffer_stale_state.get(render_buffer_index) {
+                    if !is_stale {
+                        return Ok(());
+                    }
+                } else {
+                    warn!("Render buffer index '{render_buffer_index}' out of bounds");
+                    return Ok(());
+                }
+            }
+            None => return Ok(()),
+        }
+
+        let render_buffer = match self.render_buffers.as_mut() {
+            Some(render_buffers) => {
+                if let Some(render_buffer) = render_buffers.get_mut(render_buffer_index) {
+                    render_buffer
+                } else {
+                    warn!("Render buffer index '{render_buffer_index}' out of bounds");
+                    return Ok(());
+                }
+            }
+            None => return Ok(()),
+        };
+
+        if let Some(render_buffer) = render_buffer.take() {
             debug!(
                 "Destroying Vulkan render buffer for window with id: {:?}",
                 neuclidio_window.id
@@ -263,7 +327,8 @@ impl RenderPipelineAllocatorState {
                 .destroy_buffer(staging_render_buffer.0, staging_render_buffer.1);
         }
 
-        self.render_buffer = Some(render_buffer);
+        self.render_buffers.as_mut().unwrap()[render_buffer_index] = Some(render_buffer);
+        self.render_buffer_stale_state.as_mut().unwrap()[render_buffer_index] = false;
 
         Ok(())
     }
@@ -302,8 +367,11 @@ impl RenderPipelineAllocatorState {
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
-    pub fn render_buffer(&self) -> Option<vk::Buffer> {
-        self.render_buffer.map(|render_buffer| render_buffer.0)
+    pub fn render_buffer(&self, render_buffer_index: usize) -> Option<vk::Buffer> {
+        self.render_buffers
+            .as_ref()
+            .and_then(|render_buffers| render_buffers.get(render_buffer_index))
+            .and_then(|render_buffer| render_buffer.map(|render_buffer| render_buffer.0))
     }
 
     pub fn uniform_buffers(&self) -> NeuclidioResult<&[(vk::Buffer, Allocation)]> {
@@ -439,5 +507,19 @@ impl RenderPipelineAllocatorState {
         };
 
         Ok(depth_stencil_image_view)
+    }
+
+    fn create_render_buffers(
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<(Vec<Option<(vk::Buffer, Allocation)>>, Vec<bool>)> {
+        let swap_chain = neuclidio_window
+            .swap_chain
+            .as_ref()
+            .ok_or(RenderPipelineError::Unprepared)?;
+
+        let render_buffers = vec![None; swap_chain.image_count()];
+        let render_buffer_stale_state = vec![true; swap_chain.image_count()];
+
+        Ok((render_buffers, render_buffer_stale_state))
     }
 }

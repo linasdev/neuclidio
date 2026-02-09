@@ -201,15 +201,6 @@ impl RenderEngineWindowManager {
     }
 
     pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
-        let neuclidio_window = match self.windows.get(&window_id) {
-            Some(window_data) => window_data,
-            None => {
-                warn!(
-                    "Tried to submit entity for render without Vulkan prepared for window with id: {window_id:?}"
-                );
-                return Ok(());
-            }
-        };
         let pipeline = match self.pipelines.get_mut(&window_id) {
             Some(pipeline) => pipeline,
             None => {
@@ -220,18 +211,17 @@ impl RenderEngineWindowManager {
             }
         };
 
-        pipeline.submit_entity(neuclidio_window, entity)?;
+        pipeline.submit_entity(entity)?;
 
         Ok(())
     }
 
     pub fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
-        let window_ids: Vec<WindowId> = self.windows.keys().cloned().collect();
+        let window_ids: Vec<WindowId> = self.pipelines.keys().cloned().collect();
 
         for window_id in window_ids.iter() {
-            let neuclidio_window = self.windows.get_mut(&window_id).unwrap();
             let pipeline = self.pipelines.get_mut(&window_id).unwrap();
-            pipeline.remove_entity(neuclidio_window, entity)?;
+            pipeline.remove_entity(entity)?;
         }
 
         Ok(())

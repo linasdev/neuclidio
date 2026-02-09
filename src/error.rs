@@ -1,14 +1,21 @@
 use crate::component::error::ComponentError;
+use crate::engine::proxy::error::EngineProxyError;
 use crate::engine::render::error::RenderError;
 
 pub type NeuclidioResult<T> = Result<T, NeuclidioError>;
 
 #[derive(Debug)]
 pub enum NeuclidioError {
-    EventBusClosed,
     EngineAlreadyExists,
+    EngineProxyError(EngineProxyError),
     RenderError(RenderError),
     ComponentError(ComponentError),
+}
+
+impl From<EngineProxyError> for NeuclidioError {
+    fn from(value: EngineProxyError) -> Self {
+        Self::EngineProxyError(value)
+    }
 }
 
 impl From<RenderError> for NeuclidioError {
