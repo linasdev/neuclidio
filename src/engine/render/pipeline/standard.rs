@@ -11,7 +11,7 @@ use crate::engine::render::pipeline::common::uniform::ViewProjectionUniform;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::renderable::{Renderable, RenderableExt};
 use crate::engine::render::windowing::window::NeuclidioWindow;
-use crate::entity::transform::TransformExt;
+use crate::entity::transform::{Transform, TransformExt};
 use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
 use glam::Mat4;
@@ -194,7 +194,7 @@ impl StandardRenderPipeline {
 
                 for (_, entity) in entities_with_renderable.iter() {
                     unsafe {
-                        entity.do_with_transform(|transform| {
+                        entity.do_with_transform::<Transform, _>(|transform| {
                             let push_constant = transform.as_push_constant();
                             logical_device.cmd_push_constants(
                                 command_buffer,

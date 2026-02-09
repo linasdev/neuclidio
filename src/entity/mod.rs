@@ -1,6 +1,7 @@
+use std::ops::DerefMut;
 use crate::component::{Component, ComponentExt};
 use crate::engine::render::renderable::Renderable;
-use crate::entity::transform::Transform;
+use crate::entity::transform::{Transform, TransformExt};
 use crate::id_generator::IdGenerator;
 use std::sync::{Arc, Mutex};
 
@@ -33,12 +34,19 @@ impl Entity {
         self.id
     }
 
-    pub fn do_with_transform<F>(&self, mut f: F)
+    pub fn do_with_transform<T, F>(&self, mut f: F) -> bool
     where
-        F: FnMut(&mut Transform),
+        T: TransformExt,
+        F: FnMut(&mut T),
+        for<'a> &'a mut Transform: TryInto<&'a mut T>,
     {
         let mut transform = self.transform.lock().unwrap();
-        f(&mut transform);
+        if let Ok(inner_transform) = transform.deref_mut().try_into() {
+            f(inner_transform);
+            return true;
+        }
+
+        false
     }
 
     pub fn do_with_components<C, F>(&self, mut f: F) -> bool
