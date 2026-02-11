@@ -3,6 +3,7 @@ use vulkanalia::bytecode::BytecodeError;
 #[derive(Debug)]
 pub enum RenderPipelineError {
     ByteCodeError(BytecodeError),
+    RenderableNotAllocated,
     Unprepared,
 }
 

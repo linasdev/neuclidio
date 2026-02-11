@@ -4,6 +4,7 @@ use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
+use crate::engine::render::windowing::synchronization_support::SynchronizationSupport;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::error::{NeuclidioError, NeuclidioResult};
@@ -62,7 +63,7 @@ impl RenderEngineWindowManager {
         let surface = Self::create_surface(&instance, window)?;
 
         debug!("Picking Vulkan physical device for window with id: {window_id:?}");
-        let (physical_device, queue_family_indices, swap_chain_support) =
+        let (physical_device, queue_family_indices) =
             Self::pick_physical_device(&instance, surface)?;
 
         debug!("Creating Vulkan logical device for window with id: {window_id:?}");
@@ -77,7 +78,6 @@ impl RenderEngineWindowManager {
             instance,
             logical_device,
             queue_family_indices,
-            swap_chain_support,
             physical_device,
             surface,
             graphics_queue,
@@ -201,6 +201,15 @@ impl RenderEngineWindowManager {
     }
 
     pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
+        let neuclidio_window = match self.windows.get_mut(&window_id) {
+            Some(neuclidio_window) => neuclidio_window,
+            None => {
+                warn!(
+                    "Tried to submit entity for render without Vulkan prepared for window with id: {window_id:?}"
+                );
+                return Ok(());
+            }
+        };
         let pipeline = match self.pipelines.get_mut(&window_id) {
             Some(pipeline) => pipeline,
             None => {
@@ -211,16 +220,13 @@ impl RenderEngineWindowManager {
             }
         };
 
-        pipeline.submit_entity(entity)?;
+        pipeline.submit_entity(neuclidio_window, entity)?;
 
         Ok(())
     }
 
     pub fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
-        let window_ids: Vec<WindowId> = self.pipelines.keys().cloned().collect();
-
-        for window_id in window_ids.iter() {
-            let pipeline = self.pipelines.get_mut(&window_id).unwrap();
+        for pipeline in self.pipelines.values_mut() {
             pipeline.remove_entity(entity)?;
         }
 
@@ -324,13 +330,14 @@ impl RenderEngineWindowManager {
         physical_device: vk::PhysicalDevice,
         queue_family_indices: QueueFamilyIndices,
     ) -> NeuclidioResult<Device> {
+        let queue_priorities = [1.0];
         let queue_infos: Vec<_> = queue_family_indices
             .unique()
             .iter()
             .map(|i| {
                 vk::DeviceQueueCreateInfo::builder()
                     .queue_family_index(*i)
-                    .queue_priorities(&[1.0]) // Maximum priority
+                    .queue_priorities(&queue_priorities) // Maximum priority
                     .build()
             })
             .collect();
@@ -351,13 +358,22 @@ impl RenderEngineWindowManager {
             extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
         }
 
+        let mut timeline_semaphore_features =
+            vk::PhysicalDeviceTimelineSemaphoreFeatures::builder()
+                .timeline_semaphore(true)
+                .build();
+
         let features = vk::PhysicalDeviceFeatures::builder().build();
+        let mut features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut timeline_semaphore_features)
+            .features(features)
+            .build();
 
         let logical_device_create_info = vk::DeviceCreateInfo::builder()
+            .push_next(&mut features2)
             .queue_create_infos(&queue_infos)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions)
-            .enabled_features(&features)
             .build();
 
         let logical_device =
@@ -374,7 +390,7 @@ impl RenderEngineWindowManager {
     fn pick_physical_device(
         instance: &Instance,
         surface: vk::SurfaceKHR,
-    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices, SwapChainSupport)> {
+    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices)> {
         let mut viable_physical_devices = vec![];
 
         unsafe {
@@ -388,15 +404,9 @@ impl RenderEngineWindowManager {
                             properties.device_name, err
                         );
                     }
-                    Ok(physical_devices_capabilities) => {
-                        viable_physical_devices.push((
-                            (
-                                physical_device,
-                                physical_devices_capabilities.0,
-                                physical_devices_capabilities.1,
-                            ),
-                            properties,
-                        ));
+                    Ok(queue_family_indices) => {
+                        viable_physical_devices
+                            .push(((physical_device, queue_family_indices), properties));
                     }
                 }
             }
@@ -429,12 +439,13 @@ impl RenderEngineWindowManager {
         instance: &Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> NeuclidioResult<(QueueFamilyIndices, SwapChainSupport)> {
+    ) -> NeuclidioResult<QueueFamilyIndices> {
         let queue_family_indices = QueueFamilyIndices::new(instance, surface, physical_device)?;
         DeviceExtensionSupport::new(instance, physical_device, DEVICE_EXTENSIONS)?;
-        let swap_chain_support = SwapChainSupport::new(instance, surface, physical_device)?;
+        SwapChainSupport::new(instance, surface, physical_device)?;
+        SynchronizationSupport::new(instance, physical_device)?;
 
-        Ok((queue_family_indices, swap_chain_support))
+        Ok(queue_family_indices)
     }
 
     fn rate_physical_device(physical_device_properties: vk::PhysicalDeviceProperties) -> u32 {

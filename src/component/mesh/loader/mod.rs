@@ -8,7 +8,7 @@ use obj::{Obj, load_obj};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub mod error;
 
@@ -47,6 +47,7 @@ impl MeshLoader {
             id: IdGenerator::generate_mesh_id(),
             vertices: Arc::new(vertices),
             indices: Arc::new(indices),
+            memory_allocation: Arc::new(Mutex::new(None)),
         };
 
         Ok(mesh)

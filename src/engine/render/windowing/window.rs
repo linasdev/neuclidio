@@ -1,5 +1,5 @@
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
-use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
+use crate::engine::render::windowing::swap_chain::SwapChain;
 use log::debug;
 use vulkanalia::vk::{DeviceV1_0, InstanceV1_0, KhrSurfaceExtensionInstanceCommands};
 use vulkanalia::{Device, Instance, vk};
@@ -13,7 +13,6 @@ pub struct NeuclidioWindow {
     pub instance: Instance,
     pub logical_device: Device,
     pub queue_family_indices: QueueFamilyIndices,
-    pub swap_chain_support: SwapChainSupport,
     pub physical_device: vk::PhysicalDevice,
     pub surface: vk::SurfaceKHR,
     pub graphics_queue: vk::Queue,

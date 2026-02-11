@@ -28,7 +28,11 @@ impl SwapChain {
     ) -> NeuclidioResult<Self> {
         let logical_device = &neuclidio_window.logical_device;
         let queue_family_indices = neuclidio_window.queue_family_indices;
-        let swap_chain_support = &neuclidio_window.swap_chain_support;
+        let swap_chain_support = SwapChainSupport::new(
+            &neuclidio_window.instance,
+            neuclidio_window.surface,
+            neuclidio_window.physical_device,
+        )?;
         let surface_capabilities = swap_chain_support.capabilities;
         let image_count = Self::get_image_count(surface_capabilities, preferred_image_count);
         let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;

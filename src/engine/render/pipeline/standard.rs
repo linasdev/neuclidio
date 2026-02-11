@@ -15,6 +15,7 @@ use crate::entity::transform::{Transform, TransformExt};
 use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
 use glam::Mat4;
+use log::warn;
 use std::collections::BTreeMap;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSwapchainExtensionDeviceCommands};
@@ -66,24 +67,6 @@ impl StandardRenderPipeline {
         })
     }
 
-    fn render_buffer_size(&self) -> vk::DeviceSize {
-        self.renderable_entities
-            .keys()
-            .map(|renderable| renderable.size_in_render_buffer())
-            .sum()
-    }
-
-    fn fill_render_buffer(
-        renderable_entities: &RenderableEntities,
-        mut render_buffer_memory: *mut u8,
-    ) {
-        for renderable in renderable_entities.keys() {
-            renderable.load_into_render_buffer(render_buffer_memory);
-            render_buffer_memory =
-                unsafe { render_buffer_memory.add(renderable.size_in_render_buffer() as usize) };
-        }
-    }
-
     fn fill_uniform_buffer(
         neuclidio_window: &NeuclidioWindow,
         uniform_buffer_memory: *mut u8,
@@ -112,6 +95,7 @@ impl StandardRenderPipeline {
         pipeline_state: &Option<RenderPipelineState>,
         descriptor_state: &RenderPipelineDescriptorState,
         allocator_state: &RenderPipelineAllocatorState,
+        synchronization_state: &RenderPipelineSynchronizationState,
         renderable_entities: &RenderableEntities,
         command_buffer_index: usize,
         command_buffer: vk::CommandBuffer,
@@ -145,11 +129,12 @@ impl StandardRenderPipeline {
             },
         };
 
+        let clear_values = [clear_value, depth_clear_value];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(pipeline_state.render_pass())
             .framebuffer(pipeline_state.frame_buffer(command_buffer_index))
             .render_area(render_area)
-            .clear_values(&[clear_value, depth_clear_value])
+            .clear_values(&clear_values)
             .build();
 
         unsafe {
@@ -166,58 +151,89 @@ impl StandardRenderPipeline {
             );
         }
 
-        if let Some(render_buffer) = allocator_state.render_buffer(command_buffer_index) {
-            let mut current_render_buffer_offset = 0;
-            for (renderable, entities_with_renderable) in renderable_entities.iter() {
-                unsafe {
-                    logical_device.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &[render_buffer],
-                        &[current_render_buffer_offset],
-                    );
-                    logical_device.cmd_bind_index_buffer(
-                        command_buffer,
-                        render_buffer,
-                        current_render_buffer_offset + renderable.index_offset(),
-                        vk::IndexType::UINT32,
-                    );
-                    logical_device.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline_state.pipeline_layout(),
-                        0,
-                        &[descriptor_set],
-                        &[],
-                    );
-                }
+        for (renderable, entities_with_renderable) in renderable_entities.iter() {
+            let (render_buffer_index, render_buffer_offset, last_used_in_frame) = if let (
+                Some(render_buffer_index),
+                Some(render_buffer_offset),
+                Some(last_used_in_frame),
+            ) = (
+                renderable.render_buffer_index(),
+                renderable.render_buffer_offset(),
+                renderable.last_used_in_frame(),
+            ) {
+                (
+                    render_buffer_index,
+                    render_buffer_offset,
+                    last_used_in_frame,
+                )
+            } else {
+                warn!(
+                    "Tried to render renderable with id '{:?}' without it being in the render buffer for window with id: {:?}",
+                    renderable.id(),
+                    neuclidio_window.id
+                );
+                continue;
+            };
 
-                for (_, entity) in entities_with_renderable.iter() {
-                    unsafe {
-                        entity.do_with_transform::<Transform, _>(|transform| {
-                            let push_constant = transform.as_push_constant();
-                            logical_device.cmd_push_constants(
-                                command_buffer,
-                                pipeline_state.pipeline_layout(),
-                                vk::ShaderStageFlags::VERTEX,
-                                0,
-                                push_constant.as_bytes(),
-                            );
-                        });
+            let render_buffer =
+                if let Some(render_buffer) = allocator_state.render_buffer(render_buffer_index) {
+                    render_buffer
+                } else {
+                    warn!(
+                        "Could not find render buffer with index '{}' for window with id: {:?}",
+                        render_buffer_index, neuclidio_window.id
+                    );
+                    continue;
+                };
 
-                        logical_device.cmd_draw_indexed(
-                            command_buffer,
-                            renderable.index_count() as u32,
-                            1,
-                            0,
-                            0,
-                            0,
-                        );
-                    }
-                }
-
-                current_render_buffer_offset += renderable.size_in_render_buffer();
+            unsafe {
+                logical_device.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &[render_buffer],
+                    &[render_buffer_offset],
+                );
+                logical_device.cmd_bind_index_buffer(
+                    command_buffer,
+                    render_buffer,
+                    render_buffer_offset + renderable.index_offset(),
+                    vk::IndexType::UINT32,
+                );
+                logical_device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline_state.pipeline_layout(),
+                    0,
+                    &[descriptor_set],
+                    &[],
+                );
             }
+
+            for (_, entity) in entities_with_renderable.iter() {
+                unsafe {
+                    entity.do_with_transform::<Transform, _>(|transform| {
+                        let push_constant = transform.as_push_constant();
+                        logical_device.cmd_push_constants(
+                            command_buffer,
+                            pipeline_state.pipeline_layout(),
+                            vk::ShaderStageFlags::VERTEX,
+                            0,
+                            push_constant.as_bytes(),
+                        );
+                    });
+
+                    logical_device.cmd_draw_indexed(
+                        command_buffer,
+                        renderable.index_count() as u32,
+                        1,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+            }
+
+            *last_used_in_frame.lock().unwrap() = synchronization_state.frame_index() + 1;
         }
 
         unsafe {
@@ -229,8 +245,12 @@ impl StandardRenderPipeline {
 }
 
 impl RenderPipelineExt for StandardRenderPipeline {
-    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
-        let mut renderables_changed = false;
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
+        let mut new_renderables = vec![];
         let renderables = entity.get_renderables();
         for renderable in renderables.into_iter() {
             if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
@@ -238,20 +258,25 @@ impl RenderPipelineExt for StandardRenderPipeline {
             } else {
                 let mut entities = BTreeMap::new();
                 entities.insert(entity.id(), entity.clone());
-                self.renderable_entities.insert(renderable, entities);
-                renderables_changed = true;
+                self.renderable_entities
+                    .insert(renderable.clone(), entities);
+                new_renderables.push(renderable);
             }
         }
 
-        if renderables_changed {
-            self.allocator_state.mark_render_buffers_as_stale();
+        if !new_renderables.is_empty() {
+            self.allocator_state.submit_renderables(
+                neuclidio_window,
+                &self.command_state,
+                &new_renderables,
+            )?;
         }
 
         Ok(())
     }
 
     fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
-        let mut renderables_changed = false;
+        let mut removed_renderables = vec![];
         let renderables = entity.get_renderables();
         for renderable in renderables.into_iter() {
             if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
@@ -262,12 +287,13 @@ impl RenderPipelineExt for StandardRenderPipeline {
                 && entities.is_empty()
             {
                 self.renderable_entities.remove(&renderable);
-                renderables_changed = true;
+                removed_renderables.push(renderable);
             }
         }
 
-        if renderables_changed {
-            self.allocator_state.mark_render_buffers_as_stale();
+        if !removed_renderables.is_empty() {
+            self.allocator_state
+                .remove_renderables(&removed_renderables)?;
         }
 
         Ok(())
@@ -280,15 +306,15 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
 
-        self.synchronization_state
-            .wait_for_in_flight_fence(neuclidio_window)?;
+        self.allocator_state
+            .deallocate_renderables(neuclidio_window, &self.synchronization_state)?;
 
         let image_index_result = unsafe {
             logical_device.acquire_next_image_khr(
                 swap_chain.chain(),
                 u64::MAX,
                 self.synchronization_state
-                    .get_current_image_available_semaphore(),
+                    .current_image_available_semaphore(),
                 vk::Fence::null(),
             )
         };
@@ -302,19 +328,8 @@ impl RenderPipelineExt for StandardRenderPipeline {
         };
 
         self.synchronization_state
-            .wait_for_image_in_flight(logical_device, image_index)?;
-        self.synchronization_state
-            .set_image_in_flight_to_current_in_flight_fence(image_index)?;
+            .wait_for_frame_index_semaphore_value(neuclidio_window)?;
 
-        self.allocator_state.fill_render_buffer(
-            neuclidio_window,
-            image_index,
-            &self.command_state,
-            self.render_buffer_size(),
-            |render_buffer_memory| {
-                Self::fill_render_buffer(&self.renderable_entities, render_buffer_memory);
-            },
-        )?;
         self.command_state.record_command_buffer(
             neuclidio_window,
             image_index,
@@ -324,6 +339,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
                     &self.pipeline_state,
                     &self.descriptor_state,
                     &self.allocator_state,
+                    &self.synchronization_state,
                     &self.renderable_entities,
                     image_index,
                     command_buffer,
@@ -335,34 +351,57 @@ impl RenderPipelineExt for StandardRenderPipeline {
                 Self::fill_uniform_buffer(&neuclidio_window, uniform_buffer_memory)
             })?;
 
-        self.synchronization_state
-            .reset_current_in_flight_fence(neuclidio_window)?;
+        let wait_semaphore_values = [
+            0,
+            self.synchronization_state
+                .frame_index_semaphore_required_value(),
+        ];
+        let signal_semaphore_values = [0, self.synchronization_state.frame_index() + 1];
+        let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
+            .wait_semaphore_values(&wait_semaphore_values)
+            .signal_semaphore_values(&signal_semaphore_values)
+            .build();
 
+        let wait_semaphores = [
+            self.synchronization_state
+                .current_image_available_semaphore(),
+            self.synchronization_state.frame_index_semaphore(),
+        ];
+        let wait_dst_stage_mask = [
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+        ];
+        let command_buffers = [self.command_state.command_buffer(image_index)?];
+        let signal_semaphores = [
+            self.synchronization_state
+                .current_render_finished_semaphore(),
+            self.synchronization_state.frame_index_semaphore(),
+        ];
         let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(&[self
-                .synchronization_state
-                .get_current_image_available_semaphore()])
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            .command_buffers(&[self.command_state.command_buffer(image_index)?])
-            .signal_semaphores(&[self
-                .synchronization_state
-                .get_current_render_finished_semaphore()])
+            .push_next(&mut timeline_semaphore_submit_info)
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_dst_stage_mask)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)
             .build();
 
         unsafe {
             logical_device.queue_submit(
                 neuclidio_window.graphics_queue,
                 &[submit_info],
-                self.synchronization_state.get_current_in_flight_fence(),
+                vk::Fence::null(),
             )?;
         }
 
+        let wait_semaphores = [self
+            .synchronization_state
+            .current_render_finished_semaphore()];
+        let swap_chains = [swap_chain.chain()];
+        let image_indices = [image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&[self
-                .synchronization_state
-                .get_current_render_finished_semaphore()])
-            .swapchains(&[swap_chain.chain()])
-            .image_indices(&[image_index as u32])
+            .wait_semaphores(&wait_semaphores)
+            .swapchains(&swap_chains)
+            .image_indices(&image_indices)
             .build();
 
         unsafe {
@@ -383,11 +422,9 @@ impl RenderPipelineExt for StandardRenderPipeline {
 
         self.descriptor_state.prepare_for_reset(neuclidio_window);
         self.allocator_state.prepare_for_reset(neuclidio_window);
-        self.synchronization_state.prepare_for_reset();
     }
 
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
-        self.synchronization_state.reset(neuclidio_window)?;
         self.allocator_state.reset(
             neuclidio_window,
             ViewProjectionUniform::size_in_uniform_buffer(),

@@ -14,7 +14,11 @@ pub(crate) mod common;
 pub(crate) mod standard;
 
 pub trait RenderPipelineExt {
-    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()>;
     fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
     fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow);
@@ -27,9 +31,13 @@ pub enum RenderPipeline {
 }
 
 impl RenderPipelineExt for RenderPipeline {
-    fn submit_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+    fn submit_entity(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+    ) -> NeuclidioResult<()> {
         match self {
-            RenderPipeline::Standard(pipeline) => pipeline.submit_entity(entity),
+            RenderPipeline::Standard(pipeline) => pipeline.submit_entity(neuclidio_window, entity),
         }
     }
 
@@ -93,6 +101,8 @@ pub(crate) fn copy_buffer(
     size: vk::DeviceSize,
     source: vk::Buffer,
     destination: vk::Buffer,
+    source_offset: vk::DeviceSize,
+    destination_offset: vk::DeviceSize,
 ) -> NeuclidioResult<()> {
     let logical_device = &neuclidio_window.logical_device;
     let graphics_queue = neuclidio_window.graphics_queue;
@@ -114,22 +124,26 @@ pub(crate) fn copy_buffer(
         logical_device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?;
     }
 
-    let buffer_copy = vk::BufferCopy::builder().size(size).build();
+    let buffer_copy = vk::BufferCopy::builder()
+        .src_offset(source_offset)
+        .dst_offset(destination_offset)
+        .size(size)
+        .build();
 
     unsafe {
         logical_device.cmd_copy_buffer(command_buffer, source, destination, &[buffer_copy]);
         logical_device.end_command_buffer(command_buffer)?;
     }
 
-    let command_buffers = &[command_buffer];
+    let command_buffers = [command_buffer];
     let submit_info = vk::SubmitInfo::builder()
-        .command_buffers(command_buffers)
+        .command_buffers(&command_buffers)
         .build();
 
     unsafe {
         logical_device.queue_submit(graphics_queue, &[submit_info], vk::Fence::null())?;
-        logical_device.queue_wait_idle(graphics_queue)?;
-        logical_device.free_command_buffers(command_pool, command_buffers);
+        logical_device.queue_wait_idle(graphics_queue)?; // TODO: Replace this idle waiting with a command buffer deletion queue
+        logical_device.free_command_buffers(command_pool, &command_buffers);
     }
 
     Ok(())

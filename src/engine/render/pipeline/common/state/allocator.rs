@@ -1,24 +1,40 @@
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::common::state::command::RenderPipelineCommandState;
+use crate::engine::render::pipeline::common::state::synchronization::RenderPipelineSynchronizationState;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::{copy_buffer, create_buffer};
+use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::windowing::window::NeuclidioWindow;
-use crate::error::NeuclidioResult;
-use log::{debug, warn};
+use crate::error::{NeuclidioError, NeuclidioResult};
+use log::{debug, trace, warn};
+use std::cmp::max;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
 use vulkanalia_vma::{
     Alloc, Allocation, AllocationCreateFlags, AllocationOptions, Allocator, AllocatorOptions,
-    MemoryUsage,
+    MemoryUsage, VirtualAllocationCreateFlags, VirtualAllocationOptions, VirtualBlock,
+    VirtualBlockCreateFlags, VirtualBlockOptions,
 };
+
+const RENDER_BUFFER_ALIGNMENT: vk::DeviceSize = 16;
+const MIN_RENDER_BUFFER_SIZE: vk::DeviceSize = 1024 * 1024 * 64;
+
+pub struct RenderBuffer {
+    buffer: vk::Buffer,
+    allocation: Allocation,
+    virtual_block: VirtualBlock,
+    renderable_count: usize,
+}
 
 pub struct RenderPipelineAllocatorState {
     allocator: Allocator,
+    render_buffers: BTreeMap<usize, RenderBuffer>,
+    renderables_pending_deallocation: Vec<Renderable>,
     depth_stencil_image_format: Option<vk::Format>,
     depth_stencil_image: Option<(vk::Image, Allocation)>,
     depth_stencil_image_view: Option<vk::ImageView>,
-    render_buffers: Option<Vec<Option<(vk::Buffer, Allocation)>>>,
-    render_buffer_stale_state: Option<Vec<bool>>,
     uniform_buffers: Option<Vec<(vk::Buffer, Allocation)>>,
 }
 
@@ -38,31 +54,16 @@ impl RenderPipelineAllocatorState {
 
         Ok(Self {
             allocator,
+            render_buffers: BTreeMap::new(),
+            renderables_pending_deallocation: vec![],
             depth_stencil_image_format: None,
             depth_stencil_image: None,
             depth_stencil_image_view: None,
-            render_buffers: None,
-            render_buffer_stale_state: None,
             uniform_buffers: None,
         })
     }
 
     pub fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow) {
-        if let Some(render_buffers) = self.render_buffers.take() {
-            debug!(
-                "Destroying Vulkan render buffers for window with id: {:?}",
-                neuclidio_window.id
-            );
-            for render_buffer in render_buffers.iter() {
-                if let Some(render_buffer) = render_buffer {
-                    unsafe {
-                        self.allocator
-                            .destroy_buffer(render_buffer.0, render_buffer.1);
-                    }
-                }
-            }
-        }
-
         if let Some(uniform_buffers) = self.uniform_buffers.take() {
             debug!(
                 "Destroying Vulkan uniform buffers for window with id: {:?}",
@@ -135,9 +136,6 @@ impl RenderPipelineAllocatorState {
             depth_stencil_image_format,
         )?;
 
-        let (render_buffers, render_buffer_stale_state) =
-            Self::create_render_buffers(neuclidio_window)?;
-
         debug!(
             "Creating Vulkan uniform buffers for window with id: {:?}",
             neuclidio_window.id
@@ -149,28 +147,24 @@ impl RenderPipelineAllocatorState {
         self.depth_stencil_image_format = Some(depth_stencil_image_format);
         self.depth_stencil_image = Some(depth_stencil_image);
         self.depth_stencil_image_view = Some(depth_stencil_image_view);
-        self.render_buffers = Some(render_buffers);
-        self.render_buffer_stale_state = Some(render_buffer_stale_state);
         self.uniform_buffers = Some(uniform_buffers);
 
         Ok(())
     }
 
     pub fn destroy(mut self, neuclidio_window: &NeuclidioWindow) {
-        if let Some(render_buffers) = self.render_buffers.take() {
-            debug!(
-                "Destroying Vulkan render buffers for window with id: {:?}",
-                neuclidio_window.id
-            );
-            for render_buffer in render_buffers.iter() {
-                if let Some(render_buffer) = render_buffer {
-                    unsafe {
-                        self.allocator
-                            .destroy_buffer(render_buffer.0, render_buffer.1);
-                    }
-                }
+        debug!(
+            "Destroying Vulkan render buffers for window with id: {:?}",
+            neuclidio_window.id
+        );
+        for render_buffer in self.render_buffers.values() {
+            render_buffer.virtual_block.clear();
+            unsafe {
+                self.allocator
+                    .destroy_buffer(render_buffer.buffer, render_buffer.allocation);
             }
         }
+        self.render_buffers.clear();
 
         if let Some(uniform_buffers) = self.uniform_buffers.take() {
             debug!(
@@ -219,116 +213,96 @@ impl RenderPipelineAllocatorState {
         drop(self.allocator);
     }
 
-    pub fn mark_render_buffers_as_stale(&mut self) {
-        if let Some(render_buffer_stale_state) = self.render_buffer_stale_state.as_mut() {
-            for is_stale in render_buffer_stale_state.iter_mut() {
-                *is_stale = true;
-            }
-        }
-    }
-
-    pub fn fill_render_buffer<RBF>(
+    pub fn submit_renderables(
         &mut self,
         neuclidio_window: &NeuclidioWindow,
-        render_buffer_index: usize,
         command_state: &RenderPipelineCommandState,
-        render_buffer_size: vk::DeviceSize,
-        mut render_buffer_filler: RBF,
-    ) -> NeuclidioResult<()>
-    where
-        RBF: FnMut(*mut u8),
-    {
-        if render_buffer_size == 0 {
-            return Ok(());
+        renderables: &[Renderable],
+    ) -> NeuclidioResult<()> {
+        for renderable in renderables {
+            self.allocate_renderable(neuclidio_window, renderable)?;
         }
 
-        match self.render_buffer_stale_state.as_ref() {
-            Some(render_buffer_stale_state) => {
-                if let Some(is_stale) = render_buffer_stale_state.get(render_buffer_index) {
-                    if !is_stale {
-                        return Ok(());
-                    }
-                } else {
-                    warn!("Render buffer index '{render_buffer_index}' out of bounds");
-                    return Ok(());
+        let mut uncopied_renderables: Vec<&Renderable> = vec![];
+        for renderable in renderables {
+            if let Some(uncopied_renderable) = uncopied_renderables.last() {
+                let mut should_copy = false;
+
+                if renderable.render_buffer_index() != uncopied_renderable.render_buffer_index() {
+                    should_copy = true;
                 }
+
+                let end_offset_of_uncoped_renderable = uncopied_renderable
+                    .render_buffer_offset()
+                    .map(|offset| offset + uncopied_renderable.size_in_render_buffer());
+                if renderable.render_buffer_offset() != end_offset_of_uncoped_renderable {
+                    should_copy = true;
+                }
+
+                if !should_copy {
+                    uncopied_renderables.push(renderable);
+                    continue;
+                }
+
+                self.copy_to_render_buffer(neuclidio_window, command_state, uncopied_renderables)?;
+                uncopied_renderables = vec![];
+
+                continue;
             }
-            None => return Ok(()),
+
+            uncopied_renderables.push(renderable);
         }
 
-        let render_buffer = match self.render_buffers.as_mut() {
-            Some(render_buffers) => {
-                if let Some(render_buffer) = render_buffers.get_mut(render_buffer_index) {
-                    render_buffer
-                } else {
-                    warn!("Render buffer index '{render_buffer_index}' out of bounds");
-                    return Ok(());
-                }
-            }
-            None => return Ok(()),
-        };
+        if !uncopied_renderables.is_empty() {
+            self.copy_to_render_buffer(neuclidio_window, command_state, uncopied_renderables)?;
+        }
 
-        if let Some(render_buffer) = render_buffer.take() {
-            debug!(
-                "Destroying Vulkan render buffer for window with id: {:?}",
+        Ok(())
+    }
+
+    pub fn remove_renderables(&mut self, renderables: &[Renderable]) -> NeuclidioResult<()> {
+        for renderable in renderables {
+            self.renderables_pending_deallocation
+                .push(renderable.clone());
+        }
+
+        Ok(())
+    }
+
+    pub fn deallocate_renderables(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        synchronization_state: &RenderPipelineSynchronizationState,
+    ) -> NeuclidioResult<()> {
+        let frame_index_semaphore_value =
+            synchronization_state.frame_index_semaphore_value(neuclidio_window)?;
+
+        let mut renderables_to_deallocate = vec![];
+        for (renderable_index, renderable) in
+            self.renderables_pending_deallocation.iter().enumerate()
+        {
+            if let Some(last_used_in_frame) = renderable.last_used_in_frame() {
+                let last_used_in_frame = last_used_in_frame.lock().unwrap();
+
+                if *last_used_in_frame <= frame_index_semaphore_value {
+                    renderables_to_deallocate.push(renderable_index);
+                }
+
+                continue;
+            }
+
+            warn!(
+                "Tried to deallocate a renderable that was never used in the render pipeline for window with id: {:?}",
                 neuclidio_window.id
             );
-
-            unsafe {
-                self.allocator
-                    .destroy_buffer(render_buffer.0, render_buffer.1);
-            }
         }
 
-        debug!(
-            "Creating Vulkan render buffer for window with id: {:?}",
-            neuclidio_window.id
-        );
-
-        let staging_render_buffer = create_buffer(
-            &self.allocator,
-            render_buffer_size,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            MemoryUsage::AutoPreferHost,
-            AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
-        )?;
-
-        let render_buffer_memory: *mut u8 =
-            unsafe { self.allocator.map_memory(staging_render_buffer.1)? };
-
-        render_buffer_filler(render_buffer_memory);
-
-        unsafe {
-            self.allocator.unmap_memory(staging_render_buffer.1);
-            self.allocator
-                .flush_allocation(staging_render_buffer.1, 0, vk::WHOLE_SIZE)?;
+        for renderable_index in renderables_to_deallocate.into_iter().rev() {
+            let renderable = self
+                .renderables_pending_deallocation
+                .remove(renderable_index);
+            self.deallocate_renderable(neuclidio_window, &renderable)?;
         }
-
-        let render_buffer = create_buffer(
-            &self.allocator,
-            render_buffer_size,
-            vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER,
-            MemoryUsage::AutoPreferDevice,
-            AllocationCreateFlags::empty(),
-        )?;
-
-        copy_buffer(
-            neuclidio_window,
-            command_state.command_pool(),
-            render_buffer_size,
-            staging_render_buffer.0,
-            render_buffer.0,
-        )?;
-
-        unsafe {
-            self.allocator
-                .destroy_buffer(staging_render_buffer.0, staging_render_buffer.1);
-        }
-
-        self.render_buffers.as_mut().unwrap()[render_buffer_index] = Some(render_buffer);
-        self.render_buffer_stale_state.as_mut().unwrap()[render_buffer_index] = false;
 
         Ok(())
     }
@@ -369,9 +343,8 @@ impl RenderPipelineAllocatorState {
 
     pub fn render_buffer(&self, render_buffer_index: usize) -> Option<vk::Buffer> {
         self.render_buffers
-            .as_ref()
-            .and_then(|render_buffers| render_buffers.get(render_buffer_index))
-            .and_then(|render_buffer| render_buffer.map(|render_buffer| render_buffer.0))
+            .get(&render_buffer_index)
+            .map(|render_buffer| render_buffer.buffer)
     }
 
     pub fn uniform_buffers(&self) -> NeuclidioResult<&[(vk::Buffer, Allocation)]> {
@@ -509,17 +482,205 @@ impl RenderPipelineAllocatorState {
         Ok(depth_stencil_image_view)
     }
 
-    fn create_render_buffers(
+    fn allocate_renderable(
+        &mut self,
         neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<(Vec<Option<(vk::Buffer, Allocation)>>, Vec<bool>)> {
-        let swap_chain = neuclidio_window
-            .swap_chain
-            .as_ref()
-            .ok_or(RenderPipelineError::Unprepared)?;
+        renderable: &Renderable,
+    ) -> NeuclidioResult<()> {
+        if renderable.render_buffer_index().is_some() {
+            warn!(
+                "Tried to double allocate a renderable with id: {:?}",
+                renderable.id()
+            );
+            return Ok(());
+        }
 
-        let render_buffers = vec![None; swap_chain.image_count()];
-        let render_buffer_stale_state = vec![true; swap_chain.image_count()];
+        let virtual_allocation_size = renderable.size_in_render_buffer();
+        let virtual_allocation_options = VirtualAllocationOptions {
+            size: virtual_allocation_size,
+            alignment: RENDER_BUFFER_ALIGNMENT,
+            flags: VirtualAllocationCreateFlags::empty(),
+        };
 
-        Ok((render_buffers, render_buffer_stale_state))
+        for (&render_buffer_index, render_buffer) in self.render_buffers.iter_mut() {
+            if let Ok((virtual_allocation, offset)) = render_buffer
+                .virtual_block
+                .allocate(&virtual_allocation_options)
+            {
+                let renderable_memory_allocation = RenderableMemoryAllocation {
+                    render_buffer_index,
+                    virtual_allocation,
+                    offset,
+                    last_used_in_frame: Arc::new(Mutex::new(0)),
+                };
+
+                renderable.set_memory_allocation(Some(renderable_memory_allocation));
+                render_buffer.renderable_count += 1;
+
+                return Ok(());
+            }
+        }
+
+        let render_buffer_index = self
+            .render_buffers
+            .last_key_value()
+            .map(|(index, _)| index + 1)
+            .unwrap_or(0);
+
+        debug!(
+            "Creating Vulkan render buffer with index '{render_buffer_index}' for window with id: {:?}",
+            neuclidio_window.id
+        );
+
+        let virtual_block_size = max(virtual_allocation_size, MIN_RENDER_BUFFER_SIZE);
+        let virtual_block_options = VirtualBlockOptions {
+            size: virtual_block_size,
+            flags: VirtualBlockCreateFlags::empty(),
+        };
+
+        let (buffer, allocation) = create_buffer(
+            &self.allocator,
+            virtual_block_size,
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::VERTEX_BUFFER
+                | vk::BufferUsageFlags::INDEX_BUFFER,
+            MemoryUsage::AutoPreferDevice,
+            AllocationCreateFlags::empty(),
+        )?;
+        let virtual_block = VirtualBlock::new(&virtual_block_options)?;
+        let render_buffer = RenderBuffer {
+            buffer,
+            allocation,
+            virtual_block,
+            renderable_count: 1,
+        };
+
+        let (virtual_allocation, offset) = render_buffer
+            .virtual_block
+            .allocate(&virtual_allocation_options)?;
+        let renderable_memory_allocation = RenderableMemoryAllocation {
+            render_buffer_index: self.render_buffers.len(),
+            virtual_allocation,
+            offset,
+            last_used_in_frame: Arc::new(Mutex::new(0)),
+        };
+
+        renderable.set_memory_allocation(Some(renderable_memory_allocation));
+
+        self.render_buffers
+            .insert(render_buffer_index, render_buffer);
+
+        Ok(())
+    }
+
+    fn deallocate_renderable(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        renderable: &Renderable,
+    ) -> NeuclidioResult<()> {
+        if let Some(renderable_memory_allocation) = renderable.set_memory_allocation(None)
+            && let Some(render_buffer) = self
+                .render_buffers
+                .get_mut(&renderable_memory_allocation.render_buffer_index)
+        {
+            render_buffer
+                .virtual_block
+                .free(renderable_memory_allocation.virtual_allocation);
+
+            render_buffer.renderable_count -= 1;
+
+            let render_buffer_index = renderable_memory_allocation.render_buffer_index;
+            if render_buffer.renderable_count == 0 {
+                if let Some(render_buffer) = self.render_buffers.remove(&render_buffer_index) {
+                    debug!(
+                        "Destroying Vulkan render buffer with index '{render_buffer_index}' for window with id: {:?}",
+                        neuclidio_window.id
+                    );
+
+                    unsafe {
+                        self.allocator
+                            .destroy_buffer(render_buffer.buffer, render_buffer.allocation);
+                    }
+                }
+            }
+
+            return Ok(());
+        }
+
+        warn!(
+            "Tried to double deallocate a renderable with id: {:?}",
+            renderable.id()
+        );
+        Ok(())
+    }
+
+    fn copy_to_render_buffer(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+        command_state: &RenderPipelineCommandState,
+        renderables: Vec<&Renderable>,
+    ) -> NeuclidioResult<()> {
+        trace!(
+            "Creating Vulkan staging render buffer and copying {} renderables with it for window with id: {:?}",
+            renderables.len(),
+            neuclidio_window.id
+        );
+
+        let first_renderable = renderables
+            .first()
+            .ok_or::<NeuclidioError>(RenderPipelineError::RenderableNotAllocated.into())?;
+
+        let render_buffer = first_renderable
+            .render_buffer_index()
+            .and_then(|render_buffer_index| self.render_buffers.get(&render_buffer_index))
+            .map(|render_buffer| render_buffer.buffer)
+            .ok_or::<NeuclidioError>(RenderPipelineError::RenderableNotAllocated.into())?;
+
+        let render_buffer_offset = first_renderable
+            .render_buffer_offset()
+            .ok_or::<NeuclidioError>(RenderPipelineError::RenderableNotAllocated.into())?;
+
+        let staging_render_buffer_size = renderables
+            .iter()
+            .map(|renderable| renderable.size_in_render_buffer())
+            .sum();
+
+        let staging_render_buffer = create_buffer(
+            &self.allocator,
+            staging_render_buffer_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryUsage::AutoPreferHost,
+            AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+        )?;
+
+        let staging_render_buffer_memory: *mut u8 =
+            unsafe { self.allocator.map_memory(staging_render_buffer.1)? };
+
+        for renderable in renderables {
+            renderable.load_into_staging_render_buffer(staging_render_buffer_memory);
+        }
+
+        unsafe {
+            self.allocator.unmap_memory(staging_render_buffer.1);
+            self.allocator
+                .flush_allocation(staging_render_buffer.1, 0, vk::WHOLE_SIZE)?;
+        }
+
+        copy_buffer(
+            neuclidio_window,
+            command_state.command_pool(),
+            staging_render_buffer_size,
+            staging_render_buffer.0,
+            render_buffer,
+            0,
+            render_buffer_offset,
+        )?;
+
+        unsafe {
+            self.allocator
+                .destroy_buffer(staging_render_buffer.0, staging_render_buffer.1);
+        }
+
+        Ok(())
     }
 }

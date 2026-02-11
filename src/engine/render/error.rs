@@ -14,6 +14,7 @@ pub enum RenderError {
     NoSuitableDevice,
     MissingRequiredQueueFamilies,
     MissingSwapChainSupport,
+    MissingTimelineSemaphoreSupport,
     MissingDeviceExtensions,
     MissingSurfaceFormat,
     MissingImageFormat,

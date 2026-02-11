@@ -59,7 +59,7 @@ impl RenderEngineBuilder {
                 env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
                 env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
             ))
-            .api_version(vk::make_version(1, 0, 0))
+            .api_version(vk::make_version(1, 2, 0))
             .build();
 
         let vulkan_entry = unsafe {

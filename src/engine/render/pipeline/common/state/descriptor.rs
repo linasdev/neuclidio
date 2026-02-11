@@ -130,7 +130,7 @@ impl RenderPipelineDescriptorState {
             .descriptor_count(swap_chain.image_count() as u32)
             .build();
 
-        let pool_sizes = vec![descriptor_pool_size];
+        let pool_sizes = [descriptor_pool_size];
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&pool_sizes)
             .max_sets(swap_chain.image_count() as u32);
@@ -172,8 +172,7 @@ impl RenderPipelineDescriptorState {
                 .range(uniform_buffer_size)
                 .build();
 
-            let buffer_info = vec![descriptor_buffer_info];
-
+            let buffer_info = [descriptor_buffer_info];
             let write_descriptor_set = vk::WriteDescriptorSet::builder()
                 .dst_set(descriptor_sets[i])
                 .dst_binding(0)

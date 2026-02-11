@@ -1,4 +1,5 @@
 mod device_extension_support;
+mod synchronization_support;
 
 pub mod error;
 pub mod event;

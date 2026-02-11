@@ -65,8 +65,9 @@ impl RenderPipelineState {
             neuclidio_window.id
         );
 
+        let stages = [vertex_shader_stage, fragment_shader_stage];
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&[vertex_shader_stage, fragment_shader_stage])
+            .stages(&stages)
             .vertex_input_state(&vertex_input_state.0)
             .input_assembly_state(&input_assembly_state)
             .viewport_state(&viewport_state.0)
@@ -377,22 +378,21 @@ impl RenderPipelineState {
             .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             .build();
 
-        let subpass = {
-            let color_attachment_reference = vk::AttachmentReference::builder()
-                .attachment(0)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .build();
-            let depth_stencil_attachment_reference = vk::AttachmentReference::builder()
-                .attachment(1)
-                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .build();
+        let color_attachment_reference = vk::AttachmentReference::builder()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build();
+        let depth_stencil_attachment_reference = vk::AttachmentReference::builder()
+            .attachment(1)
+            .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .build();
 
-            vk::SubpassDescription::builder()
-                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                .color_attachments(&[color_attachment_reference])
-                .depth_stencil_attachment(&depth_stencil_attachment_reference)
-                .build()
-        };
+        let color_attachments = [color_attachment_reference];
+        let subpass = vk::SubpassDescription::builder()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachments)
+            .depth_stencil_attachment(&depth_stencil_attachment_reference)
+            .build();
 
         let dependency = vk::SubpassDependency::builder()
             .src_subpass(vk::SUBPASS_EXTERNAL)
@@ -412,9 +412,9 @@ impl RenderPipelineState {
             )
             .build();
 
-        let attachments = vec![color_attachment, depth_stencil_attachment];
-        let subpasses = vec![subpass];
-        let dependencies = vec![dependency];
+        let attachments = [color_attachment, depth_stencil_attachment];
+        let subpasses = [subpass];
+        let dependencies = [dependency];
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
             .attachments(&attachments)
             .subpasses(&subpasses)
@@ -444,9 +444,10 @@ impl RenderPipelineState {
         let mut frame_buffers = Vec::with_capacity(swap_chain.image_count());
 
         for image_view in swap_chain.image_views() {
+            let attachments = [*image_view, depth_stencil_image_view];
             let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(render_pass)
-                .attachments(&[*image_view, depth_stencil_image_view])
+                .attachments(&attachments)
                 .width(swap_chain.extent().width)
                 .height(swap_chain.extent().height)
                 .layers(1)

@@ -1,17 +1,16 @@
-use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
-use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
-use vulkanalia::{Device, vk};
+use vulkanalia::vk;
+use vulkanalia::vk::{DeviceV1_0, DeviceV1_2, HasBuilder};
 
 pub struct RenderPipelineSynchronizationState {
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
-    in_flight_fences: Vec<vk::Fence>,
-    images_in_flight: Option<Vec<vk::Fence>>,
+    frame_index_semaphore: vk::Semaphore,
+    frame_index: u64,
+    frame_in_flight_index: usize,
     max_frames_in_flight: usize,
-    frame: usize,
 }
 
 impl RenderPipelineSynchronizationState {
@@ -24,61 +23,38 @@ impl RenderPipelineSynchronizationState {
             neuclidio_window.id
         );
 
+        let frame_index_semaphore = Self::create_timeline_semaphore(neuclidio_window)?;
         let mut image_available_semaphores = Vec::with_capacity(max_frames_in_flight);
         let mut render_finished_semaphores = Vec::with_capacity(max_frames_in_flight);
-        let mut in_flight_fences = Vec::with_capacity(max_frames_in_flight);
 
         for _ in 0..max_frames_in_flight {
             image_available_semaphores.push(Self::create_semaphore(neuclidio_window)?);
             render_finished_semaphores.push(Self::create_semaphore(neuclidio_window)?);
-            in_flight_fences.push(Self::create_fence(neuclidio_window)?);
         }
 
         let synchronization = Self {
             image_available_semaphores,
             render_finished_semaphores,
-            in_flight_fences,
-            images_in_flight: None,
+            frame_index_semaphore,
+            frame_index: 0,
+            frame_in_flight_index: 0,
             max_frames_in_flight,
-            frame: 0,
         };
 
         Ok(synchronization)
-    }
-
-    pub fn prepare_for_reset(&mut self) {
-        self.images_in_flight.take();
-    }
-
-    pub fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
-        let swap_chain = neuclidio_window
-            .swap_chain
-            .as_ref()
-            .ok_or(RenderPipelineError::Unprepared)?;
-
-        self.images_in_flight = Some(vec![vk::Fence::null(); swap_chain.image_count()]);
-
-        Ok(())
     }
 
     pub fn destroy(self, neuclidio_window: &NeuclidioWindow) {
         let logical_device = &neuclidio_window.logical_device;
 
         debug!(
-            "Destroying Vulkan fences for window with id: {:?}",
-            neuclidio_window.id
-        );
-
-        for fence in self.in_flight_fences.iter() {
-            unsafe {
-                logical_device.destroy_fence(*fence, None);
-            }
-        }
-
-        debug!(
             "Destroying Vulkan semaphores for window with id: {:?}",
             neuclidio_window.id
         );
+
+        unsafe {
+            logical_device.destroy_semaphore(self.frame_index_semaphore, None);
+        }
 
         for semaphore in self.render_finished_semaphores.iter() {
             unsafe {
@@ -92,88 +68,70 @@ impl RenderPipelineSynchronizationState {
         }
     }
 
-    pub fn get_current_image_available_semaphore(&self) -> vk::Semaphore {
-        self.image_available_semaphores[self.frame]
+    pub fn current_image_available_semaphore(&self) -> vk::Semaphore {
+        self.image_available_semaphores[self.frame_in_flight_index]
     }
 
-    pub fn get_current_render_finished_semaphore(&self) -> vk::Semaphore {
-        self.render_finished_semaphores[self.frame]
+    pub fn current_render_finished_semaphore(&self) -> vk::Semaphore {
+        self.render_finished_semaphores[self.frame_in_flight_index]
     }
 
-    pub fn get_current_in_flight_fence(&self) -> vk::Fence {
-        self.in_flight_fences[self.frame]
+    pub fn frame_index_semaphore(&self) -> vk::Semaphore {
+        self.frame_index_semaphore
     }
 
-    pub fn wait_for_in_flight_fence(
+    pub fn frame_index_semaphore_value(
         &self,
         neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()> {
-        let in_flight_fence = self.get_current_in_flight_fence();
-
-        unsafe {
+    ) -> NeuclidioResult<u64> {
+        let frame_index_semaphore_value = unsafe {
             neuclidio_window
                 .logical_device
-                .wait_for_fences(&[in_flight_fence], true, u64::MAX)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn reset_current_in_flight_fence(
-        &self,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()> {
-        let in_flight_fence = self.get_current_in_flight_fence();
-
-        unsafe {
-            neuclidio_window
-                .logical_device
-                .reset_fences(&[in_flight_fence])?;
-        }
-
-        Ok(())
-    }
-
-    pub fn wait_for_image_in_flight(
-        &self,
-        logical_device: &Device,
-        image_index: usize,
-    ) -> NeuclidioResult<()> {
-        let images_in_flight = match self.images_in_flight.as_ref() {
-            Some(image_in_flight) => image_in_flight,
-            None => return Err(RenderPipelineError::Unprepared.into()),
+                .get_semaphore_counter_value(self.frame_index_semaphore)?
         };
 
-        let image_in_flight = images_in_flight[image_index];
+        Ok(frame_index_semaphore_value)
+    }
 
-        if image_in_flight.is_null() {
+    pub fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+
+    pub fn frame_index_semaphore_required_value(&self) -> u64 {
+        if self.frame_index < self.max_frames_in_flight as u64 {
+            return 0;
+        }
+
+        self.frame_index - self.max_frames_in_flight as u64
+    }
+
+    pub fn wait_for_frame_index_semaphore_value(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<()> {
+        if self.frame_index < self.max_frames_in_flight as u64 {
             return Ok(());
         }
 
+        let semaphores = [self.frame_index_semaphore];
+        let values = [self.frame_index_semaphore_required_value()];
+        let semaphore_wait_info = vk::SemaphoreWaitInfo::builder()
+            .semaphores(&semaphores)
+            .values(&values)
+            .build();
+
         unsafe {
-            logical_device.wait_for_fences(&[image_in_flight], true, u64::MAX)?;
+            neuclidio_window
+                .logical_device
+                .wait_semaphores(&semaphore_wait_info, 0)?;
         }
-
-        Ok(())
-    }
-
-    pub fn set_image_in_flight_to_current_in_flight_fence(
-        &mut self,
-        image_index: usize,
-    ) -> NeuclidioResult<()> {
-        let in_flight_fence = self.get_current_in_flight_fence();
-
-        let images_in_flight = match self.images_in_flight.as_mut() {
-            Some(image_in_flight) => image_in_flight,
-            None => return Err(RenderPipelineError::Unprepared.into()),
-        };
-        images_in_flight[image_index] = in_flight_fence;
 
         Ok(())
     }
 
     pub fn increment_frame(&mut self) {
-        self.frame = (self.frame + 1) % self.max_frames_in_flight;
+        self.frame_in_flight_index = (self.frame_in_flight_index + 1) % self.max_frames_in_flight;
+        self.frame_index += 1;
     }
 
     fn create_semaphore(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<vk::Semaphore> {
@@ -188,17 +146,24 @@ impl RenderPipelineSynchronizationState {
         Ok(semaphore)
     }
 
-    fn create_fence(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<vk::Fence> {
-        let fence_create_info = vk::FenceCreateInfo::builder()
-            .flags(vk::FenceCreateFlags::SIGNALED)
+    fn create_timeline_semaphore(
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<vk::Semaphore> {
+        let mut semaphore_type_create_info = vk::SemaphoreTypeCreateInfo::builder()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0)
             .build();
 
-        let fence = unsafe {
+        let semaphore_create_info = vk::SemaphoreCreateInfo::builder()
+            .push_next(&mut semaphore_type_create_info)
+            .build();
+
+        let semaphore = unsafe {
             neuclidio_window
                 .logical_device
-                .create_fence(&fence_create_info, None)?
+                .create_semaphore(&semaphore_create_info, None)?
         };
 
-        Ok(fence)
+        Ok(semaphore)
     }
 }
