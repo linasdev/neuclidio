@@ -299,6 +299,49 @@ impl RenderPipelineExt for StandardRenderPipeline {
         Ok(())
     }
 
+    fn handle_renderable_added(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()> {
+        if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
+            entities.insert(entity.id(), entity.clone());
+        } else {
+            let mut entities = BTreeMap::new();
+            entities.insert(entity.id(), entity.clone());
+            self.renderable_entities
+                .insert(renderable.clone(), entities);
+
+            self.allocator_state.submit_renderables(
+                neuclidio_window,
+                &self.command_state,
+                &[renderable],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_renderable_removed(
+        &mut self,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()> {
+        if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
+            entities.remove(&entity.id());
+        }
+
+        if let Some(entities) = self.renderable_entities.get(&renderable)
+            && entities.is_empty()
+        {
+            self.renderable_entities.remove(&renderable);
+            self.allocator_state.remove_renderables(&[renderable])?;
+        }
+
+        Ok(())
+    }
+
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
         let logical_device = &neuclidio_window.logical_device;
         let swap_chain = neuclidio_window

@@ -1,5 +1,4 @@
 use crate::engine::render::RenderEngine;
-use crate::engine::render::windowing::window_manager::RenderEngineWindowManager;
 use crate::error::NeuclidioResult;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::vk::HasBuilder;
@@ -67,8 +66,6 @@ impl RenderEngineBuilder {
             Entry::new(loader)?
         };
 
-        let window_manager = RenderEngineWindowManager::new(application_info, vulkan_entry);
-
-        Ok(RenderEngine::new(window_manager))
+        Ok(RenderEngine::new(application_info, vulkan_entry))
     }
 }

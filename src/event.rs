@@ -1,6 +1,6 @@
 use winit::window::WindowId;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Event {
     WindowClosed(WindowId),
 }

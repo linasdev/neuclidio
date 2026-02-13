@@ -103,7 +103,7 @@ impl EngineProxy {
             .send_event(WindowingEvent::ExitEventLoop);
     }
 
-    fn send_proxy_request(&self, event_proxy_request: EngineProxyRequest) {
+    pub(crate) fn send_proxy_request(&self, event_proxy_request: EngineProxyRequest) {
         if self.proxy_request_sender.send(event_proxy_request).is_err() {
             panic!("Neuclidio engine proxy request channel closed");
         }

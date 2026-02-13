@@ -100,19 +100,30 @@ impl EngineApp {
             }
             EngineProxyRequest::AddEntity(window_id, entity) => {
                 let entity_id = entity.id();
-                if self.entities.get(&entity_id).is_none() {
-                    if let Err(err) = self.render_engine.submit_entity(window_id, &entity) {
-                        warn!(
-                            "Failed to add entity with id '{entity_id:?}' to window with id '{window_id:?}' with error: {err:?}"
-                        );
-                    }
+                if entity.has_window_id(window_id) {
+                    warn!(
+                        "Entity with id '{entity_id:?}' is already added to window with id: {window_id:?}"
+                    );
+                    return;
+                }
 
+                entity.add_window_id(window_id);
+
+                if let Err(err) = self.render_engine.submit_entity(window_id, &entity) {
+                    warn!(
+                        "Failed to add entity with id '{entity_id:?}' to window with id '{window_id:?}' with error: {err:?}"
+                    );
+                }
+
+                if self.entities.get(&entity_id).is_none() {
                     self.entities.insert(entity_id, entity);
                 }
             }
             EngineProxyRequest::RemoveEntity(entity) => {
                 let entity_id = entity.id();
                 if let Some(entity) = self.entities.remove(&entity_id) {
+                    entity.clear_window_ids();
+
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
                         warn!(
                             "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
@@ -122,13 +133,37 @@ impl EngineApp {
             }
             EngineProxyRequest::RemoveEntityById(entity_id) => {
                 if let Some(entity) = self.entities.remove(&entity_id) {
+                    entity.clear_window_ids();
+
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
                         warn!(
                             "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
                         );
                     }
-
-                    self.entities.remove(&entity_id);
+                }
+            }
+            EngineProxyRequest::HandleRenderableAdded(entity_id, renderable) => {
+                if let Some(entity) = self.entities.get(&entity_id) {
+                    if let Err(err) = self
+                        .render_engine
+                        .handle_renderable_added(entity, renderable)
+                    {
+                        warn!(
+                            "Failed to handle renderable added for entity with id '{entity_id:?}' with error: {err:?}"
+                        );
+                    }
+                }
+            }
+            EngineProxyRequest::HandleRenderableRemoved(entity_id, renderable) => {
+                if let Some(entity) = self.entities.get(&entity_id) {
+                    if let Err(err) = self
+                        .render_engine
+                        .handle_renderable_removed(entity, renderable)
+                    {
+                        warn!(
+                            "Failed to handle renderable removed for entity with id '{entity_id:?}' with error: {err:?}"
+                        );
+                    }
                 }
             }
         }
@@ -222,12 +257,14 @@ impl ApplicationHandler<WindowingEvent> for EngineApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        match self.proxy_request_receiver.try_recv() {
-            Ok(request) => self.handle_proxy_request(request),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                panic!("Neuclidio engine proxy request channel closed");
+        loop {
+            match self.proxy_request_receiver.try_recv() {
+                Ok(request) => self.handle_proxy_request(request),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("Neuclidio engine proxy request channel closed");
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
             }
-            Err(mpsc::TryRecvError::Empty) => {}
         }
 
         match event {

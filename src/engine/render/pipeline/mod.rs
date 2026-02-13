@@ -1,4 +1,5 @@
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
+use crate::engine::render::renderable::Renderable;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::error::NeuclidioResult;
@@ -20,7 +21,21 @@ pub trait RenderPipelineExt {
         entity: &Entity,
     ) -> NeuclidioResult<()>;
     fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
+
+    fn handle_renderable_added(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()>;
+    fn handle_renderable_removed(
+        &mut self,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()>;
+
     fn render(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
+
     fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow);
     fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()>;
     fn destroy(self, neuclidio_window: &NeuclidioWindow);
@@ -44,6 +59,31 @@ impl RenderPipelineExt for RenderPipeline {
     fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
         match self {
             RenderPipeline::Standard(pipeline) => pipeline.remove_entity(entity),
+        }
+    }
+
+    fn handle_renderable_added(
+        &mut self,
+        neuclidio_window: &NeuclidioWindow,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()> {
+        match self {
+            RenderPipeline::Standard(pipeline) => {
+                pipeline.handle_renderable_added(neuclidio_window, entity, renderable)
+            }
+        }
+    }
+
+    fn handle_renderable_removed(
+        &mut self,
+        entity: &Entity,
+        renderable: Renderable,
+    ) -> NeuclidioResult<()> {
+        match self {
+            RenderPipeline::Standard(pipeline) => {
+                pipeline.handle_renderable_removed(entity, renderable)
+            }
         }
     }
 

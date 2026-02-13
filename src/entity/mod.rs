@@ -1,9 +1,13 @@
 use crate::component::{Component, ComponentExt};
+use crate::engine::proxy::EngineProxy;
+use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::renderable::Renderable;
 use crate::entity::transform::{Transform, TransformExt};
 use crate::id_generator::IdGenerator;
+use std::collections::BTreeSet;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use winit::window::WindowId;
 
 pub mod transform;
 
@@ -13,6 +17,7 @@ pub struct EntityId(pub(crate) u64);
 #[derive(Clone)]
 pub struct Entity {
     id: EntityId,
+    window_ids: Arc<Mutex<BTreeSet<WindowId>>>,
     transform: Arc<Mutex<Transform>>,
     components: Arc<Mutex<Vec<Component>>>,
 }
@@ -25,6 +30,7 @@ impl Entity {
     pub fn new_with_transform(transform: Transform) -> Self {
         Self {
             id: IdGenerator::generate_entity_id(),
+            window_ids: Arc::new(Mutex::new(BTreeSet::new())),
             transform: Arc::new(Mutex::new(transform)),
             components: Arc::new(Mutex::new(vec![])),
         }
@@ -32,6 +38,18 @@ impl Entity {
 
     pub fn id(&self) -> EntityId {
         self.id
+    }
+
+    pub fn has_window_id(&self, window_id: WindowId) -> bool {
+        self.window_ids.lock().unwrap().contains(&window_id)
+    }
+
+    pub(crate) fn add_window_id(&self, window_id: WindowId) -> bool {
+        self.window_ids.lock().unwrap().insert(window_id)
+    }
+
+    pub(crate) fn clear_window_ids(&self) {
+        self.window_ids.lock().unwrap().clear();
     }
 
     pub fn do_with_transform<T, F>(&self, mut f: F) -> bool
@@ -67,11 +85,39 @@ impl Entity {
         invoked_at_least_once
     }
 
-    pub fn add_component<C>(&mut self, component: C)
+    pub fn add_component<C>(&mut self, component: C, proxy: &EngineProxy)
     where
-        C: Into<Component>,
+        C: ComponentExt,
     {
-        self.components.lock().unwrap().push(component.into());
+        let component = component.into();
+        let renderable = Renderable::try_from(&component);
+
+        self.components.lock().unwrap().push(component);
+
+        if let Ok(renderable) = renderable {
+            proxy.send_proxy_request(EngineProxyRequest::HandleRenderableAdded(
+                self.id, renderable,
+            ));
+        }
+    }
+
+    pub fn remove_components<C>(&mut self, proxy: &EngineProxy)
+    where
+        C: ComponentExt,
+        for<'a> &'a mut C: TryFrom<&'a Component>,
+    {
+        let mut components = self.components.lock().unwrap();
+
+        let removed_components =
+            components.extract_if(.., |component| <&mut C>::try_from(component).is_err());
+
+        for removed_component in removed_components {
+            if let Ok(renderable) = Renderable::try_from(&removed_component) {
+                proxy.send_proxy_request(EngineProxyRequest::HandleRenderableRemoved(
+                    self.id, renderable,
+                ));
+            }
+        }
     }
 
     pub(crate) fn get_renderables(&self) -> Vec<Renderable> {
