@@ -16,7 +16,7 @@ use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
 use glam::Mat4;
 use log::warn;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSwapchainExtensionDeviceCommands};
 
@@ -29,7 +29,7 @@ const FRAGMENT_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
     "/shaders/standard/fragment_shader.spv"
 ));
 
-type RenderableEntities = BTreeMap<Renderable, BTreeMap<EntityId, Entity>>;
+type RenderableEntities = HashMap<Renderable, HashMap<EntityId, Entity>>;
 
 pub struct StandardRenderPipeline {
     pipeline_state: Option<RenderPipelineState>,
@@ -55,7 +55,7 @@ impl StandardRenderPipeline {
             RenderPipelineSynchronizationState::new(neuclidio_window, max_frames_in_flight)?;
         let command_state = RenderPipelineCommandState::new(neuclidio_window)?;
         let allocator_state = RenderPipelineAllocatorState::new(neuclidio_window)?;
-        let renderable_entities = BTreeMap::new();
+        let renderable_entities = HashMap::new();
 
         Ok(Self {
             pipeline_state: None,
@@ -152,20 +152,16 @@ impl StandardRenderPipeline {
         }
 
         for (renderable, entities_with_renderable) in renderable_entities.iter() {
-            let (render_buffer_index, render_buffer_offset, last_used_in_frame) = if let (
-                Some(render_buffer_index),
+            let (render_buffer_id, render_buffer_offset, last_used_in_frame) = if let (
+                Some(render_buffer_id),
                 Some(render_buffer_offset),
                 Some(last_used_in_frame),
             ) = (
-                renderable.render_buffer_index(),
+                renderable.render_buffer_id(),
                 renderable.render_buffer_offset(),
                 renderable.last_used_in_frame(),
             ) {
-                (
-                    render_buffer_index,
-                    render_buffer_offset,
-                    last_used_in_frame,
-                )
+                (render_buffer_id, render_buffer_offset, last_used_in_frame)
             } else {
                 warn!(
                     "Tried to render renderable with id '{:?}' without it being in the render buffer for window with id: {:?}",
@@ -175,16 +171,17 @@ impl StandardRenderPipeline {
                 continue;
             };
 
-            let render_buffer =
-                if let Some(render_buffer) = allocator_state.render_buffer(render_buffer_index) {
-                    render_buffer
-                } else {
-                    warn!(
-                        "Could not find render buffer with index '{}' for window with id: {:?}",
-                        render_buffer_index, neuclidio_window.id
-                    );
-                    continue;
-                };
+            let render_buffer = if let Some(render_buffer) =
+                allocator_state.render_buffer(render_buffer_id)
+            {
+                render_buffer
+            } else {
+                warn!(
+                    "Could not find render buffer with index '{render_buffer_id:?}' for window with id: {:?}",
+                    neuclidio_window.id
+                );
+                continue;
+            };
 
             unsafe {
                 logical_device.cmd_bind_vertex_buffers(
@@ -233,7 +230,7 @@ impl StandardRenderPipeline {
                 }
             }
 
-            *last_used_in_frame.lock().unwrap() = synchronization_state.frame_index() + 1;
+            *last_used_in_frame.lock().unwrap() = Some(synchronization_state.frame_index() + 1);
         }
 
         unsafe {
@@ -256,7 +253,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
             if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
                 entities.insert(entity.id(), entity.clone());
             } else {
-                let mut entities = BTreeMap::new();
+                let mut entities = HashMap::new();
                 entities.insert(entity.id(), entity.clone());
                 self.renderable_entities
                     .insert(renderable.clone(), entities);
@@ -308,7 +305,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         if let Some(entities) = self.renderable_entities.get_mut(&renderable) {
             entities.insert(entity.id(), entity.clone());
         } else {
-            let mut entities = BTreeMap::new();
+            let mut entities = HashMap::new();
             entities.insert(entity.id(), entity.clone());
             self.renderable_entities
                 .insert(renderable.clone(), entities);

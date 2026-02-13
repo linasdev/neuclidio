@@ -1,4 +1,5 @@
 use crate::component::{Component, ComponentExt};
+use crate::engine::render::pipeline::common::state::allocator::RenderBufferId;
 use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::engine::render::renderable::{
     Renderable, RenderableExt, RenderableId, RenderableMemoryAllocation,
@@ -9,7 +10,7 @@ use vulkanalia::vk;
 
 pub mod loader;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub struct MeshId(pub(crate) u64);
 
 #[derive(Clone)]
@@ -25,12 +26,12 @@ impl RenderableExt for Mesh {
         RenderableId::Mesh(self.id)
     }
 
-    fn render_buffer_index(&self) -> Option<usize> {
+    fn render_buffer_id(&self) -> Option<RenderBufferId> {
         self.memory_allocation
             .lock()
             .unwrap()
             .as_ref()
-            .map(|memory_allocation| memory_allocation.render_buffer_index)
+            .map(|memory_allocation| memory_allocation.render_buffer_id)
     }
 
     fn render_buffer_offset(&self) -> Option<vk::DeviceSize> {
@@ -41,7 +42,7 @@ impl RenderableExt for Mesh {
             .map(|memory_allocation| memory_allocation.offset)
     }
 
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<u64>>> {
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>> {
         self.memory_allocation
             .lock()
             .unwrap()

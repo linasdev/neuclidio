@@ -1,26 +1,27 @@
 use crate::component::mesh::{Mesh, MeshId};
-use std::cmp::Ordering;
+use crate::engine::render::pipeline::common::state::allocator::RenderBufferId;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
 use vulkanalia_vma::VirtualAllocation;
 
 pub struct RenderableMemoryAllocation {
-    pub render_buffer_index: usize,
+    pub render_buffer_id: RenderBufferId,
     pub virtual_allocation: VirtualAllocation,
     pub offset: vk::DeviceSize,
-    pub last_used_in_frame: Arc<Mutex<u64>>,
+    pub last_used_in_frame: Arc<Mutex<Option<u64>>>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum RenderableId {
     Mesh(MeshId),
 }
 
 pub trait RenderableExt: Into<Renderable> {
     fn id(&self) -> RenderableId;
-    fn render_buffer_index(&self) -> Option<usize>;
+    fn render_buffer_id(&self) -> Option<RenderBufferId>;
     fn render_buffer_offset(&self) -> Option<vk::DeviceSize>;
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<u64>>>;
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>>;
     fn set_memory_allocation(
         &self,
         new_memory_allocation: Option<RenderableMemoryAllocation>,
@@ -45,9 +46,9 @@ impl RenderableExt for Renderable {
         }
     }
 
-    fn render_buffer_index(&self) -> Option<usize> {
+    fn render_buffer_id(&self) -> Option<RenderBufferId> {
         match self {
-            Renderable::Mesh(mesh) => mesh.render_buffer_index(),
+            Renderable::Mesh(mesh) => mesh.render_buffer_id(),
         }
     }
 
@@ -57,7 +58,7 @@ impl RenderableExt for Renderable {
         }
     }
 
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<u64>>> {
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>> {
         match self {
             Renderable::Mesh(mesh) => mesh.last_used_in_frame(),
         }
@@ -93,22 +94,16 @@ impl RenderableExt for Renderable {
     }
 }
 
-impl Ord for Renderable {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.id().cmp(&other.id())
-    }
-}
-
 impl Eq for Renderable {}
-
-impl PartialOrd for Renderable {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.id().partial_cmp(&other.id())
-    }
-}
 
 impl PartialEq for Renderable {
     fn eq(&self, other: &Self) -> bool {
         self.id().eq(&other.id())
+    }
+}
+
+impl Hash for Renderable {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
     }
 }

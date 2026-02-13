@@ -6,9 +6,10 @@ use crate::engine::render::pipeline::{copy_buffer, create_buffer};
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::{NeuclidioError, NeuclidioResult};
+use crate::id_generator::IdGenerator;
 use log::{debug, trace, warn};
 use std::cmp::max;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder, InstanceV1_0};
@@ -21,6 +22,9 @@ use vulkanalia_vma::{
 const RENDER_BUFFER_ALIGNMENT: vk::DeviceSize = 16;
 const MIN_RENDER_BUFFER_SIZE: vk::DeviceSize = 1024 * 1024 * 64;
 
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+pub struct RenderBufferId(pub(crate) u64);
+
 pub struct RenderBuffer {
     buffer: vk::Buffer,
     allocation: Allocation,
@@ -30,7 +34,7 @@ pub struct RenderBuffer {
 
 pub struct RenderPipelineAllocatorState {
     allocator: Allocator,
-    render_buffers: BTreeMap<usize, RenderBuffer>,
+    render_buffers: HashMap<RenderBufferId, RenderBuffer>,
     renderables_pending_deallocation: Vec<Renderable>,
     depth_stencil_image_format: Option<vk::Format>,
     depth_stencil_image: Option<(vk::Image, Allocation)>,
@@ -54,7 +58,7 @@ impl RenderPipelineAllocatorState {
 
         Ok(Self {
             allocator,
-            render_buffers: BTreeMap::new(),
+            render_buffers: HashMap::new(),
             renderables_pending_deallocation: vec![],
             depth_stencil_image_format: None,
             depth_stencil_image: None,
@@ -228,7 +232,7 @@ impl RenderPipelineAllocatorState {
             if let Some(uncopied_renderable) = uncopied_renderables.last() {
                 let mut should_copy = false;
 
-                if renderable.render_buffer_index() != uncopied_renderable.render_buffer_index() {
+                if renderable.render_buffer_id() != uncopied_renderable.render_buffer_id() {
                     should_copy = true;
                 }
 
@@ -284,9 +288,13 @@ impl RenderPipelineAllocatorState {
             if let Some(last_used_in_frame) = renderable.last_used_in_frame() {
                 let last_used_in_frame = last_used_in_frame.lock().unwrap();
 
-                if *last_used_in_frame <= frame_index_semaphore_value {
-                    renderables_to_deallocate.push(renderable_index);
+                if let Some(last_used_in_frame) = *last_used_in_frame
+                    && last_used_in_frame > frame_index_semaphore_value
+                {
+                    continue;
                 }
+
+                renderables_to_deallocate.push(renderable_index);
 
                 continue;
             }
@@ -341,9 +349,9 @@ impl RenderPipelineAllocatorState {
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
-    pub fn render_buffer(&self, render_buffer_index: usize) -> Option<vk::Buffer> {
+    pub fn render_buffer(&self, render_buffer_id: RenderBufferId) -> Option<vk::Buffer> {
         self.render_buffers
-            .get(&render_buffer_index)
+            .get(&render_buffer_id)
             .map(|render_buffer| render_buffer.buffer)
     }
 
@@ -487,7 +495,7 @@ impl RenderPipelineAllocatorState {
         neuclidio_window: &NeuclidioWindow,
         renderable: &Renderable,
     ) -> NeuclidioResult<()> {
-        if renderable.render_buffer_index().is_some() {
+        if renderable.render_buffer_id().is_some() {
             warn!(
                 "Tried to double allocate a renderable with id: {:?}",
                 renderable.id()
@@ -502,16 +510,16 @@ impl RenderPipelineAllocatorState {
             flags: VirtualAllocationCreateFlags::empty(),
         };
 
-        for (&render_buffer_index, render_buffer) in self.render_buffers.iter_mut() {
+        for (&render_buffer_id, render_buffer) in self.render_buffers.iter_mut() {
             if let Ok((virtual_allocation, offset)) = render_buffer
                 .virtual_block
                 .allocate(&virtual_allocation_options)
             {
                 let renderable_memory_allocation = RenderableMemoryAllocation {
-                    render_buffer_index,
+                    render_buffer_id,
                     virtual_allocation,
                     offset,
-                    last_used_in_frame: Arc::new(Mutex::new(0)),
+                    last_used_in_frame: Arc::new(Mutex::new(None)),
                 };
 
                 renderable.set_memory_allocation(Some(renderable_memory_allocation));
@@ -521,14 +529,10 @@ impl RenderPipelineAllocatorState {
             }
         }
 
-        let render_buffer_index = self
-            .render_buffers
-            .last_key_value()
-            .map(|(index, _)| index + 1)
-            .unwrap_or(0);
+        let render_buffer_id = IdGenerator::generate_render_buffer_id();
 
         debug!(
-            "Creating Vulkan render buffer with index '{render_buffer_index}' for window with id: {:?}",
+            "Creating Vulkan render buffer with id '{render_buffer_id:?}' for window with id: {:?}",
             neuclidio_window.id
         );
 
@@ -559,16 +563,15 @@ impl RenderPipelineAllocatorState {
             .virtual_block
             .allocate(&virtual_allocation_options)?;
         let renderable_memory_allocation = RenderableMemoryAllocation {
-            render_buffer_index: self.render_buffers.len(),
+            render_buffer_id,
             virtual_allocation,
             offset,
-            last_used_in_frame: Arc::new(Mutex::new(0)),
+            last_used_in_frame: Arc::new(Mutex::new(None)),
         };
 
         renderable.set_memory_allocation(Some(renderable_memory_allocation));
 
-        self.render_buffers
-            .insert(render_buffer_index, render_buffer);
+        self.render_buffers.insert(render_buffer_id, render_buffer);
 
         Ok(())
     }
@@ -581,7 +584,7 @@ impl RenderPipelineAllocatorState {
         if let Some(renderable_memory_allocation) = renderable.set_memory_allocation(None)
             && let Some(render_buffer) = self
                 .render_buffers
-                .get_mut(&renderable_memory_allocation.render_buffer_index)
+                .get_mut(&renderable_memory_allocation.render_buffer_id)
         {
             render_buffer
                 .virtual_block
@@ -589,11 +592,11 @@ impl RenderPipelineAllocatorState {
 
             render_buffer.renderable_count -= 1;
 
-            let render_buffer_index = renderable_memory_allocation.render_buffer_index;
+            let render_buffer_id = renderable_memory_allocation.render_buffer_id;
             if render_buffer.renderable_count == 0 {
-                if let Some(render_buffer) = self.render_buffers.remove(&render_buffer_index) {
+                if let Some(render_buffer) = self.render_buffers.remove(&render_buffer_id) {
                     debug!(
-                        "Destroying Vulkan render buffer with index '{render_buffer_index}' for window with id: {:?}",
+                        "Destroying Vulkan render buffer with id '{render_buffer_id:?}' for window with id: {:?}",
                         neuclidio_window.id
                     );
 
@@ -631,8 +634,8 @@ impl RenderPipelineAllocatorState {
             .ok_or::<NeuclidioError>(RenderPipelineError::RenderableNotAllocated.into())?;
 
         let render_buffer = first_renderable
-            .render_buffer_index()
-            .and_then(|render_buffer_index| self.render_buffers.get(&render_buffer_index))
+            .render_buffer_id()
+            .and_then(|render_buffer_id| self.render_buffers.get(&render_buffer_id))
             .map(|render_buffer| render_buffer.buffer)
             .ok_or::<NeuclidioError>(RenderPipelineError::RenderableNotAllocated.into())?;
 

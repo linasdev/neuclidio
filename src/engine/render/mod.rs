@@ -13,7 +13,9 @@ use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_void};
-use vulkanalia::vk::{DeviceV1_0, EntryV1_0, ExtDebugUtilsExtensionInstanceCommands, HasBuilder, InstanceV1_0};
+use vulkanalia::vk::{
+    DeviceV1_0, EntryV1_0, ExtDebugUtilsExtensionInstanceCommands, HasBuilder, InstanceV1_0,
+};
 use vulkanalia::window as vk_window;
 use vulkanalia::{Device, Entry, Instance, Version, vk};
 use winit::window::{Window, WindowId};
@@ -106,7 +108,9 @@ impl RenderEngine {
 
     pub fn render_on_window(&mut self, window: &Window) -> NeuclidioResult<()> {
         let window_id = window.id();
-        let (neuclidio_window, pipeline) = if let Some(pair) = self.get_window_and_pipeline_mut(window_id) {
+        let (neuclidio_window, pipeline) = if let Some(pair) =
+            self.get_window_and_pipeline_mut(window_id)
+        {
             pair
         } else {
             warn!(
@@ -201,7 +205,9 @@ impl RenderEngine {
     }
 
     pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
-        let (neuclidio_window, pipeline) = if let Some(pair) = self.get_window_and_pipeline_mut(window_id) {
+        let (neuclidio_window, pipeline) = if let Some(pair) =
+            self.get_window_and_pipeline_mut(window_id)
+        {
             pair
         } else {
             warn!(
@@ -234,7 +240,9 @@ impl RenderEngine {
                 continue;
             }
 
-            let (neuclidio_window, pipeline) = if let Some(pair) = self.get_window_and_pipeline_mut(window_id) {
+            let (neuclidio_window, pipeline) = if let Some(pair) =
+                self.get_window_and_pipeline_mut(window_id)
+            {
                 pair
             } else {
                 warn!(
@@ -274,7 +282,10 @@ impl RenderEngine {
         Ok(())
     }
 
-    fn get_window_and_pipeline_mut(&mut self, window_id: WindowId) -> Option<(&NeuclidioWindow, &mut RenderPipeline)> {
+    fn get_window_and_pipeline_mut(
+        &mut self,
+        window_id: WindowId,
+    ) -> Option<(&NeuclidioWindow, &mut RenderPipeline)> {
         let neuclidio_window = match self.windows.get(&window_id) {
             Some(neuclidio_window) => neuclidio_window,
             None => {
