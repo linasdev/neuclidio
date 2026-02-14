@@ -2,7 +2,7 @@ use crate::component::mesh::Mesh;
 use crate::component::mesh::loader::error::MeshLoaderError;
 use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::error::NeuclidioResult;
-use crate::id_generator::IdGenerator;
+use crate::id::MeshId;
 use glam::{Vec2, Vec3};
 use obj::{Obj, load_obj};
 use std::fs::File;
@@ -44,7 +44,7 @@ impl MeshLoader {
             .collect();
 
         let mesh = Mesh {
-            id: IdGenerator::generate_mesh_id(),
+            id: MeshId::new(),
             vertices: Arc::new(vertices),
             indices: Arc::new(indices),
             memory_allocation: Arc::new(Mutex::new(None)),

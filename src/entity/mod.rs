@@ -3,16 +3,13 @@ use crate::engine::proxy::EngineProxy;
 use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::renderable::Renderable;
 use crate::entity::transform::{Transform, TransformExt};
-use crate::id_generator::IdGenerator;
+use crate::id::EntityId;
 use std::collections::HashSet;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use winit::window::WindowId;
 
 pub mod transform;
-
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
-pub struct EntityId(pub(crate) u64);
 
 #[derive(Clone)]
 pub struct Entity {
@@ -29,7 +26,7 @@ impl Entity {
 
     pub fn new_with_transform(transform: Transform) -> Self {
         Self {
-            id: IdGenerator::generate_entity_id(),
+            id: EntityId::new(),
             window_ids: Arc::new(Mutex::new(HashSet::new())),
             transform: Arc::new(Mutex::new(transform)),
             components: Arc::new(Mutex::new(vec![])),

@@ -1,6 +1,7 @@
 use crate::engine::proxy::EngineProxy;
 use crate::engine::render::renderable::Renderable;
-use crate::entity::{Entity, EntityId};
+use crate::entity::Entity;
+use crate::id::EntityId;
 use std::sync::mpsc;
 use winit::window::WindowId;
 

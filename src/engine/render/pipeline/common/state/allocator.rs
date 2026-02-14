@@ -6,7 +6,7 @@ use crate::engine::render::pipeline::{copy_buffer, create_buffer};
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::{NeuclidioError, NeuclidioResult};
-use crate::id_generator::IdGenerator;
+use crate::id::RenderBufferId;
 use log::{debug, trace, warn};
 use std::cmp::max;
 use std::collections::HashMap;
@@ -21,9 +21,6 @@ use vulkanalia_vma::{
 
 const RENDER_BUFFER_ALIGNMENT: vk::DeviceSize = 16;
 const MIN_RENDER_BUFFER_SIZE: vk::DeviceSize = 1024 * 1024 * 64;
-
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
-pub struct RenderBufferId(pub(crate) u64);
 
 pub struct RenderBuffer {
     buffer: vk::Buffer,
@@ -529,10 +526,10 @@ impl RenderPipelineAllocatorState {
             }
         }
 
-        let render_buffer_id = IdGenerator::generate_render_buffer_id();
+        let render_buffer_id = RenderBufferId::new();
 
         debug!(
-            "Creating Vulkan render buffer with id '{render_buffer_id:?}' for window with id: {:?}",
+            "Creating Vulkan render buffer with id '{render_buffer_id}' for window with id: {:?}",
             neuclidio_window.id
         );
 
@@ -596,7 +593,7 @@ impl RenderPipelineAllocatorState {
             if render_buffer.renderable_count == 0 {
                 if let Some(render_buffer) = self.render_buffers.remove(&render_buffer_id) {
                     debug!(
-                        "Destroying Vulkan render buffer with id '{render_buffer_id:?}' for window with id: {:?}",
+                        "Destroying Vulkan render buffer with id '{render_buffer_id}' for window with id: {:?}",
                         neuclidio_window.id
                     );
 

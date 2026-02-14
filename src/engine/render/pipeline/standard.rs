@@ -11,9 +11,10 @@ use crate::engine::render::pipeline::common::uniform::ViewProjectionUniform;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::renderable::{Renderable, RenderableExt};
 use crate::engine::render::windowing::window::NeuclidioWindow;
+use crate::entity::Entity;
 use crate::entity::transform::{Transform, TransformExt};
-use crate::entity::{Entity, EntityId};
 use crate::error::NeuclidioResult;
+use crate::id::EntityId;
 use glam::Mat4;
 use log::warn;
 use std::collections::HashMap;
@@ -177,7 +178,7 @@ impl StandardRenderPipeline {
                 render_buffer
             } else {
                 warn!(
-                    "Could not find render buffer with index '{render_buffer_id:?}' for window with id: {:?}",
+                    "Could not find render buffer with index '{render_buffer_id}' for window with id: {:?}",
                     neuclidio_window.id
                 );
                 continue;

@@ -1,17 +1,12 @@
 use crate::component::{Component, ComponentExt};
-use crate::engine::render::pipeline::common::state::allocator::RenderBufferId;
 use crate::engine::render::pipeline::common::vertex::Vertex;
-use crate::engine::render::renderable::{
-    Renderable, RenderableExt, RenderableId, RenderableMemoryAllocation,
-};
+use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
+use crate::id::{MeshId, RenderBufferId, RenderableId};
 use std::slice;
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
 
 pub mod loader;
-
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
-pub struct MeshId(pub(crate) u64);
 
 #[derive(Clone)]
 pub struct Mesh {

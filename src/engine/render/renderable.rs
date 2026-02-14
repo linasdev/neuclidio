@@ -1,5 +1,5 @@
-use crate::component::mesh::{Mesh, MeshId};
-use crate::engine::render::pipeline::common::state::allocator::RenderBufferId;
+use crate::component::mesh::Mesh;
+use crate::id::{RenderBufferId, RenderableId};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
@@ -10,11 +10,6 @@ pub struct RenderableMemoryAllocation {
     pub virtual_allocation: VirtualAllocation,
     pub offset: vk::DeviceSize,
     pub last_used_in_frame: Arc<Mutex<Option<u64>>>,
-}
-
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
-pub enum RenderableId {
-    Mesh(MeshId),
 }
 
 pub trait RenderableExt: Into<Renderable> {

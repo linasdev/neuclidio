@@ -3,9 +3,10 @@ use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::RenderEngine;
 use crate::engine::render::windowing::error::WindowingError;
 use crate::engine::thread::EngineThread;
-use crate::entity::{Entity, EntityId};
+use crate::entity::Entity;
 use crate::error::NeuclidioResult;
 use crate::event::Event;
+use crate::id::EntityId;
 use bus::Bus;
 use log::{error, info, warn};
 use render::windowing::event::WindowingEvent;
@@ -102,7 +103,7 @@ impl EngineApp {
                 let entity_id = entity.id();
                 if entity.has_window_id(window_id) {
                     warn!(
-                        "Entity with id '{entity_id:?}' is already added to window with id: {window_id:?}"
+                        "Entity with id '{entity_id}' is already added to window with id: {window_id:?}"
                     );
                     return;
                 }
@@ -111,7 +112,7 @@ impl EngineApp {
 
                 if let Err(err) = self.render_engine.submit_entity(window_id, &entity) {
                     warn!(
-                        "Failed to add entity with id '{entity_id:?}' to window with id '{window_id:?}' with error: {err:?}"
+                        "Failed to add entity with id '{entity_id}' to window with id '{window_id:?}' with error: {err:?}"
                     );
                 }
 
@@ -125,9 +126,7 @@ impl EngineApp {
                     entity.clear_window_ids();
 
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
-                        warn!(
-                            "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
-                        );
+                        warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
                     }
                 }
             }
@@ -136,9 +135,7 @@ impl EngineApp {
                     entity.clear_window_ids();
 
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
-                        warn!(
-                            "Failed to remove entity with id '{entity_id:?}' with error: {err:?}"
-                        );
+                        warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
                     }
                 }
             }
@@ -149,7 +146,7 @@ impl EngineApp {
                         .handle_renderable_added(entity, renderable)
                     {
                         warn!(
-                            "Failed to handle renderable added for entity with id '{entity_id:?}' with error: {err:?}"
+                            "Failed to handle renderable added for entity with id '{entity_id}' with error: {err:?}"
                         );
                     }
                 }
@@ -161,7 +158,7 @@ impl EngineApp {
                         .handle_renderable_removed(entity, renderable)
                     {
                         warn!(
-                            "Failed to handle renderable removed for entity with id '{entity_id:?}' with error: {err:?}"
+                            "Failed to handle renderable removed for entity with id '{entity_id}' with error: {err:?}"
                         );
                     }
                 }

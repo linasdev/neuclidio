@@ -4,4 +4,4 @@ pub mod entity;
 pub mod error;
 pub mod event;
 
-pub(crate) mod id_generator;
+pub(crate) mod id;
