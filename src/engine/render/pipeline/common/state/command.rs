@@ -1,9 +1,11 @@
 use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, HasBuilder};
+use winit::window::WindowId;
 
 pub struct RenderPipelineCommandState {
     command_pool: vk::CommandPool,
@@ -11,19 +13,22 @@ pub struct RenderPipelineCommandState {
 }
 
 impl RenderPipelineCommandState {
-    pub fn new(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<Self> {
+    pub fn new(
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<Self> {
         debug!(
-            "Creating Vulkan command pool for window with id: {:?}",
+            "Creating Vulkan graphics command pool for window with id: {:?}",
             neuclidio_window.id
         );
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(neuclidio_window.queue_family_indices.graphics)
+            .queue_family_index(vulkan_context.queue_family_indices.graphics)
             .build();
 
         let command_pool = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .create_command_pool(&command_pool_create_info, None)?
         };
@@ -34,7 +39,11 @@ impl RenderPipelineCommandState {
         })
     }
 
-    pub fn prepare_for_reset(&mut self, neuclidio_window: &NeuclidioWindow) {
+    pub fn prepare_for_window_reset(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) {
         let command_buffers = match self.command_buffers.take() {
             Some(command_buffers) => command_buffers,
             None => return,
@@ -46,14 +55,18 @@ impl RenderPipelineCommandState {
         );
 
         unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .free_command_buffers(self.command_pool, &command_buffers);
         }
     }
 
-    pub fn reset(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
-        let logical_device = &neuclidio_window.logical_device;
+    pub fn reset_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<()> {
+        let logical_device = &vulkan_context.logical_device;
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
@@ -80,14 +93,14 @@ impl RenderPipelineCommandState {
 
     pub fn record_command_buffer<CBR>(
         &mut self,
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
         command_buffer_index: usize,
         mut command_buffer_recorder: CBR,
     ) -> NeuclidioResult<()>
     where
         CBR: FnMut(vk::CommandBuffer) -> NeuclidioResult<()>,
     {
-        let logical_device = &neuclidio_window.logical_device;
+        let logical_device = &vulkan_context.logical_device;
         let command_buffer = self.command_buffer(command_buffer_index)?;
 
         unsafe {
@@ -112,20 +125,14 @@ impl RenderPipelineCommandState {
         Ok(())
     }
 
-    pub fn destroy(self, neuclidio_window: &NeuclidioWindow) {
-        debug!(
-            "Destroying Vulkan command pool for window with id: {:?}",
-            neuclidio_window.id
-        );
+    pub fn destroy(self, vulkan_context: &VulkanContext, window_id: WindowId) {
+        debug!("Destroying Vulkan graphics command pool for window with id: {window_id:?}");
+
         unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .destroy_command_pool(self.command_pool, None);
         }
-    }
-
-    pub fn command_pool(&self) -> vk::CommandPool {
-        self.command_pool
     }
 
     pub fn command_buffer(

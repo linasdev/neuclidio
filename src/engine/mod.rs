@@ -2,12 +2,14 @@ use crate::engine::proxy::EngineProxy;
 use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::RenderEngine;
 use crate::engine::render::windowing::error::WindowingError;
+use crate::engine::render::windowing::event::{AddWindowResult, CloseWindowResult};
 use crate::engine::thread::EngineThread;
 use crate::entity::Entity;
 use crate::error::NeuclidioResult;
 use crate::event::Event;
 use crate::id::EntityId;
 use bus::Bus;
+use itertools::Itertools;
 use log::{error, info, warn};
 use render::windowing::event::WindowingEvent;
 use std::collections::HashMap;
@@ -15,7 +17,7 @@ use std::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 pub mod builder;
 pub mod proxy;
@@ -84,7 +86,7 @@ struct EngineApp {
 }
 
 impl EngineApp {
-    pub fn handle_proxy_request(&mut self, proxy_request: EngineProxyRequest) {
+    fn handle_proxy_request(&mut self, proxy_request: EngineProxyRequest) {
         match proxy_request {
             EngineProxyRequest::AddProxy(proxy_sender) => {
                 info!("Creating Neuclidio engine proxy");
@@ -123,20 +125,20 @@ impl EngineApp {
             EngineProxyRequest::RemoveEntity(entity) => {
                 let entity_id = entity.id();
                 if let Some(entity) = self.entities.remove(&entity_id) {
-                    entity.clear_window_ids();
-
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
                         warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
                     }
+
+                    entity.clear_window_ids();
                 }
             }
             EngineProxyRequest::RemoveEntityById(entity_id) => {
                 if let Some(entity) = self.entities.remove(&entity_id) {
-                    entity.clear_window_ids();
-
                     if let Err(err) = self.render_engine.remove_entity(&entity) {
                         warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
                     }
+
+                    entity.clear_window_ids();
                 }
             }
             EngineProxyRequest::HandleRenderableAdded(entity_id, renderable) => {
@@ -165,6 +167,104 @@ impl EngineApp {
             }
         }
     }
+
+    fn handle_exit_event(&mut self, event_loop: &ActiveEventLoop) {
+        let window_ids = self.windows.keys().copied().collect_vec();
+
+        for window_id in window_ids.into_iter() {
+            let _ = self.close_window(window_id);
+        }
+
+        event_loop.exit();
+    }
+
+    fn handle_add_window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        mut window_attributes: WindowAttributes,
+        result_sender: mpsc::Sender<AddWindowResult>,
+    ) {
+        if window_attributes.title.as_str() == "winit window" {
+            window_attributes = window_attributes.with_title("Neuclidio Example");
+        }
+
+        match event_loop.create_window(window_attributes) {
+            Ok(window) => {
+                let window_id = window.id();
+                info!("Added window with id: {:?}", window_id);
+
+                match self.render_engine.prepare_for_window(&window) {
+                    Ok(_) => {
+                        info!("Prepared Vulkan for window with id: {:?}", window_id);
+                    }
+                    Err(err) => {
+                        error!("Failed to prepare Vulkan for window: {:?}", err);
+
+                        if let Err(_) = result_sender.send(Err(err)) {
+                            error!("Failed to send result across windowing event channel");
+                        }
+                        return;
+                    }
+                }
+
+                self.windows.insert(window_id, window);
+
+                let value = Ok(window_id);
+                if result_sender.send(value).is_err() {
+                    log::error!("Failed to send result across windowing event channel");
+                }
+            }
+            Err(err) => {
+                error!("Failed to add window: {}", err);
+
+                let value = Err(WindowingError::OsError(err).into());
+                if let Err(_) = result_sender.send(value) {
+                    error!("Failed to send result across windowing event channel");
+                }
+            }
+        }
+    }
+
+    fn handle_close_window_event(
+        &mut self,
+        window_id: WindowId,
+        result_sender: mpsc::Sender<CloseWindowResult>,
+    ) {
+        match self.close_window(window_id) {
+            Ok(_) => {
+                if let Err(_) = result_sender.send(Ok(())) {
+                    log::error!("Failed to send result across windowing event channel");
+                }
+            }
+            Err(err) => {
+                if let Err(_) = result_sender.send(Err(err)) {
+                    error!("Failed to send result across windowing event channel");
+                }
+            }
+        }
+    }
+
+    fn close_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
+        match self.windows.remove(&window_id) {
+            Some(window) => {
+                if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
+                    warn!(
+                        "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
+                    );
+                }
+
+                drop(window);
+                info!("Closed window with id: {:?}", window_id);
+
+                Ok(())
+            }
+            None => {
+                let err = WindowingError::WindowNotFound;
+                error!("Failed to close window: {:?}", err);
+                Err(err.into())
+            }
+        }
+    }
 }
 
 impl ApplicationHandler<WindowingEvent> for EngineApp {
@@ -172,78 +272,12 @@ impl ApplicationHandler<WindowingEvent> for EngineApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WindowingEvent) {
         match event {
-            WindowingEvent::ExitEventLoop => event_loop.exit(),
-            WindowingEvent::AddWindow(mut window_attributes, result_sender) => {
-                if window_attributes.title.as_str() == "winit window" {
-                    window_attributes = window_attributes.with_title("Neuclidio Example");
-                }
-
-                match event_loop.create_window(window_attributes) {
-                    Ok(window) => {
-                        let window_id = window.id();
-                        info!("Added window with id: {:?}", window_id);
-
-                        match self.render_engine.prepare_for_window(&window) {
-                            Ok(_) => {
-                                info!(
-                                    "Prepared Vulkan instance for window with id: {:?}",
-                                    window_id
-                                );
-                            }
-                            Err(err) => {
-                                error!("Failed to prepare Vulkan instance for window: {:?}", err);
-
-                                if let Err(_) = result_sender.send(Err(err)) {
-                                    error!("Failed to send result across windowing event channel");
-                                }
-                                return;
-                            }
-                        }
-
-                        self.windows.insert(window_id, window);
-
-                        let value = Ok(window_id);
-                        if result_sender.send(value).is_err() {
-                            log::error!("Failed to send result across windowing event channel");
-                        }
-                    }
-                    Err(err) => {
-                        error!("Failed to add window: {}", err);
-
-                        let value = Err(WindowingError::OsError(err).into());
-                        if let Err(_) = result_sender.send(value) {
-                            error!("Failed to send result across windowing event channel");
-                        }
-                    }
-                }
+            WindowingEvent::ExitEventLoop => self.handle_exit_event(event_loop),
+            WindowingEvent::AddWindow(window_attributes, result_sender) => {
+                self.handle_add_window_event(event_loop, window_attributes, result_sender);
             }
             WindowingEvent::CloseWindow(window_id, result_sender) => {
-                match self.windows.remove(&window_id) {
-                    Some(window) => {
-                        if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
-                            warn!(
-                                "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
-                            );
-                            return;
-                        }
-
-                        drop(window);
-                        info!("Closed window with id: {:?}", window_id);
-
-                        if let Err(_) = result_sender.send(Ok(())) {
-                            log::error!("Failed to send result across windowing event channel");
-                        }
-                    }
-                    None => {
-                        let err = WindowingError::WindowNotFound;
-                        error!("Failed to close window: {:?}", err);
-
-                        let value = Err(err.into());
-                        if let Err(_) = result_sender.send(value) {
-                            error!("Failed to send result across windowing event channel");
-                        }
-                    }
-                }
+                self.handle_close_window_event(window_id, result_sender);
             }
         }
     }

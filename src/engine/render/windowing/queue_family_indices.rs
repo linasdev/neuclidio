@@ -8,6 +8,7 @@ use vulkanalia::{Instance, vk};
 pub struct QueueFamilyIndices {
     pub graphics: u32,
     pub present: u32,
+    pub transfer: u32,
 }
 
 impl QueueFamilyIndices {
@@ -36,8 +37,22 @@ impl QueueFamilyIndices {
                 }
             }
 
-            if let (Some(graphics), Some(present)) = (graphics, present) {
-                Ok(Self { graphics, present })
+            let transfer = properties
+                .iter()
+                .position(|p| {
+                    p.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                        && !p.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                        && !p.queue_flags.contains(vk::QueueFlags::COMPUTE)
+                })
+                .map(|i| i as u32)
+                .or(graphics);
+
+            if let (Some(graphics), Some(present), Some(transfer)) = (graphics, present, transfer) {
+                Ok(Self {
+                    graphics,
+                    present,
+                    transfer,
+                })
             } else {
                 Err(RenderError::MissingRequiredQueueFamilies.into())
             }
@@ -48,6 +63,7 @@ impl QueueFamilyIndices {
         let mut unique_indices = HashSet::new();
         unique_indices.insert(self.graphics);
         unique_indices.insert(self.present);
+        unique_indices.insert(self.transfer);
         unique_indices
     }
 }

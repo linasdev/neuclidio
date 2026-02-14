@@ -2,9 +2,11 @@ use crate::component::{Component, ComponentExt};
 use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::id::{MeshId, RenderBufferId, RenderableId};
+use std::collections::HashMap;
 use std::slice;
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
+use winit::window::WindowId;
 
 pub mod loader;
 
@@ -37,7 +39,7 @@ impl RenderableExt for Mesh {
             .map(|memory_allocation| memory_allocation.offset)
     }
 
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>> {
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<HashMap<WindowId, u64>>>> {
         self.memory_allocation
             .lock()
             .unwrap()

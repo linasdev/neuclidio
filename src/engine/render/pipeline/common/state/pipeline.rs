@@ -2,30 +2,33 @@ use crate::engine::render::pipeline::common::state::allocator::RenderPipelineAll
 use crate::engine::render::pipeline::common::state::descriptor::RenderPipelineDescriptorState;
 use crate::engine::render::pipeline::common::vertex::Vertex;
 use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
+use std::collections::HashMap;
 use vulkanalia::bytecode::Bytecode;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder};
 use vulkanalia::{Device, vk};
+use winit::window::WindowId;
 
 pub struct RenderPipelineState {
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
-    frame_buffers: Vec<vk::Framebuffer>,
+    frame_buffers: HashMap<WindowId, Vec<vk::Framebuffer>>,
 }
 
 impl RenderPipelineState {
     pub fn new(
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
         descriptor_state: &RenderPipelineDescriptorState,
         allocator_state: &RenderPipelineAllocatorState,
         push_constant_ranges: &[vk::PushConstantRange],
         vertex_shader_bytecode: &[u8],
         fragment_shader_bytecode: &[u8],
     ) -> NeuclidioResult<Self> {
-        let logical_device = &neuclidio_window.logical_device;
+        let logical_device = &vulkan_context.logical_device;
 
         let vertex_shader_module =
             Self::create_shader_module(logical_device, vertex_shader_bytecode)?;
@@ -36,45 +39,38 @@ impl RenderPipelineState {
         let fragment_shader_stage = Self::create_fragment_shader_stage(fragment_shader_module);
         let vertex_input_state = Self::create_vertex_input_state();
         let input_assembly_state = Self::create_input_assembly_state();
-        let viewport_state = Self::create_viewport_state(neuclidio_window)?;
+        let viewport_state = Self::create_viewport_state();
         let rasterization_state = Self::create_rasterization_state();
         let multisample_state = Self::create_multisample_state();
         let depth_stencil_state = Self::create_depth_stencil_state();
         let color_blend_state = Self::create_color_blend_state();
+        let dynamic_state = Self::create_dynamic_state();
 
-        debug!(
-            "Creating Vulkan pipeline layout for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Creating Vulkan pipeline layout");
 
         let pipeline_layout = Self::create_pipeline_layout(
-            neuclidio_window,
+            vulkan_context,
             &[descriptor_state.descriptor_set_layout()],
             push_constant_ranges,
         )?;
 
-        debug!(
-            "Creating Vulkan render pass for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Creating Vulkan render pass");
 
-        let render_pass = Self::create_render_pass(neuclidio_window, allocator_state)?;
+        let render_pass = Self::create_render_pass(vulkan_context, allocator_state)?;
 
-        debug!(
-            "Creating Vulkan pipeline for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Creating Vulkan pipeline");
 
         let stages = [vertex_shader_stage, fragment_shader_stage];
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .stages(&stages)
             .vertex_input_state(&vertex_input_state.0)
             .input_assembly_state(&input_assembly_state)
-            .viewport_state(&viewport_state.0)
+            .viewport_state(&viewport_state)
             .rasterization_state(&rasterization_state)
             .multisample_state(&multisample_state)
             .depth_stencil_state(&depth_stencil_state)
             .color_blend_state(&color_blend_state.0)
+            .dynamic_state(&dynamic_state.0)
             .layout(pipeline_layout)
             .render_pass(render_pass)
             .build();
@@ -91,13 +87,7 @@ impl RenderPipelineState {
         Self::destroy_shader_module(logical_device, vertex_shader_module);
         Self::destroy_shader_module(logical_device, fragment_shader_module);
 
-        debug!(
-            "Creating Vulkan frame buffers for window with id: {:?}",
-            neuclidio_window.id
-        );
-
-        let frame_buffers =
-            Self::create_frame_buffers(neuclidio_window, allocator_state, render_pass)?;
+        let frame_buffers = HashMap::new();
 
         Ok(Self {
             pipeline,
@@ -107,42 +97,62 @@ impl RenderPipelineState {
         })
     }
 
-    pub fn destroy(self, neuclidio_window: &NeuclidioWindow) {
-        let logical_device = &neuclidio_window.logical_device;
+    pub fn prepare_for_window_reset(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) {
+        if let Some(frame_buffers) = self.frame_buffers.remove(&neuclidio_window.id) {
+            debug!(
+                "Destroying Vulkan frame buffers for window with id: {:?}",
+                neuclidio_window.id
+            );
 
-        debug!(
-            "Destroying Vulkan frame buffers for window with id: {:?}",
-            neuclidio_window.id
-        );
-
-        for frame_buffer in self.frame_buffers.iter() {
-            unsafe {
-                logical_device.destroy_framebuffer(*frame_buffer, None);
+            for frame_buffer in frame_buffers.into_iter() {
+                unsafe {
+                    vulkan_context
+                        .logical_device
+                        .destroy_framebuffer(frame_buffer, None);
+                }
             }
         }
+    }
 
+    pub fn reset_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+        allocator_state: &RenderPipelineAllocatorState,
+    ) -> NeuclidioResult<()> {
         debug!(
-            "Destroying Vulkan pipeline for window with id: {:?}",
+            "Creating Vulkan frame buffers for window with id: {:?}",
             neuclidio_window.id
         );
+
+        let frame_buffers =
+            self.create_frame_buffers(vulkan_context, neuclidio_window, allocator_state)?;
+        self.frame_buffers
+            .insert(neuclidio_window.id, frame_buffers);
+
+        Ok(())
+    }
+
+    pub fn destroy(self, vulkan_context: &VulkanContext) {
+        let logical_device = &vulkan_context.logical_device;
+
+        debug!("Destroying Vulkan pipeline");
 
         unsafe {
             logical_device.destroy_pipeline(self.pipeline, None);
         }
 
-        debug!(
-            "Destroying Vulkan pipeline layout for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Destroying Vulkan pipeline layout");
 
         unsafe {
             logical_device.destroy_pipeline_layout(self.pipeline_layout, None);
         }
 
-        debug!(
-            "Destroying Vulkan render pass for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Destroying Vulkan render pass");
 
         unsafe {
             logical_device.destroy_render_pass(self.render_pass, None);
@@ -161,8 +171,15 @@ impl RenderPipelineState {
         self.render_pass
     }
 
-    pub fn frame_buffer(&self, frame_buffer_index: usize) -> vk::Framebuffer {
-        self.frame_buffers[frame_buffer_index]
+    pub fn frame_buffer(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+        frame_buffer_index: usize,
+    ) -> Option<vk::Framebuffer> {
+        self.frame_buffers
+            .get(&neuclidio_window.id)
+            .and_then(|frame_buffers| frame_buffers.get(frame_buffer_index))
+            .map(|frame_buffer| *frame_buffer)
     }
 
     fn create_shader_module(
@@ -232,40 +249,11 @@ impl RenderPipelineState {
             .build()
     }
 
-    fn create_viewport_state(
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<(
-        vk::PipelineViewportStateCreateInfo,
-        Vec<vk::Viewport>,
-        Vec<vk::Rect2D>,
-    )> {
-        let swap_chain = neuclidio_window
-            .swap_chain
-            .as_ref()
-            .ok_or(RenderPipelineError::Unprepared)?;
-
-        let viewport = vk::Viewport::builder()
-            .x(0.0)
-            .y(0.0)
-            .width(swap_chain.extent().width as f32)
-            .height(swap_chain.extent().height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build();
-
-        let scissor = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(swap_chain.extent())
-            .build();
-
-        let viewports = vec![viewport];
-        let scissors = vec![scissor];
-        let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-            .viewports(&viewports)
-            .scissors(&scissors)
-            .build();
-
-        Ok((viewport_state, viewports, scissors))
+    fn create_viewport_state() -> vk::PipelineViewportStateCreateInfo {
+        vk::PipelineViewportStateCreateInfo::builder()
+            .viewport_count(1)
+            .scissor_count(1)
+            .build()
     }
 
     fn create_rasterization_state() -> vk::PipelineRasterizationStateCreateInfo {
@@ -327,8 +315,17 @@ impl RenderPipelineState {
         (color_blend_state, attachments)
     }
 
+    fn create_dynamic_state() -> (vk::PipelineDynamicStateCreateInfo, Vec<vk::DynamicState>) {
+        let states = vec![vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&states)
+            .build();
+
+        (dynamic_state, states)
+    }
+
     fn create_pipeline_layout(
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
         descriptor_set_layouts: &[vk::DescriptorSetLayout],
         push_constant_ranges: &[vk::PushConstantRange],
     ) -> NeuclidioResult<vk::PipelineLayout> {
@@ -338,7 +335,7 @@ impl RenderPipelineState {
             .build();
 
         let pipeline_layout = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .create_pipeline_layout(&pipeline_layout_create_info, None)?
         };
@@ -347,17 +344,14 @@ impl RenderPipelineState {
     }
 
     fn create_render_pass(
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
         allocator_state: &RenderPipelineAllocatorState,
     ) -> NeuclidioResult<vk::RenderPass> {
-        let swap_chain = neuclidio_window
-            .swap_chain
-            .as_ref()
-            .ok_or(RenderPipelineError::Unprepared)?;
-        let depth_stencil_image_format = allocator_state.depth_stencil_image_format()?;
+        let color_image_format = vk::Format::B8G8R8A8_SRGB; // TODO: Render to a custom offscreen image, then copy that image to the swap_chain
+        let depth_stencil_image_format = allocator_state.depth_stencil_image_format();
 
         let color_attachment = vk::AttachmentDescription::builder()
-            .format(swap_chain.image_format())
+            .format(color_image_format)
             .samples(vk::SampleCountFlags::_1)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -422,7 +416,7 @@ impl RenderPipelineState {
             .build();
 
         let render_pass = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .create_render_pass(&render_pass_create_info, None)?
         };
@@ -431,22 +425,24 @@ impl RenderPipelineState {
     }
 
     fn create_frame_buffers(
+        &self,
+        vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
         allocator_state: &RenderPipelineAllocatorState,
-        render_pass: vk::RenderPass,
     ) -> NeuclidioResult<Vec<vk::Framebuffer>> {
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
-        let depth_stencil_image_view = allocator_state.depth_stencil_image_view()?;
+        let depth_stencil_image_view =
+            allocator_state.depth_stencil_image_view(neuclidio_window)?;
 
         let mut frame_buffers = Vec::with_capacity(swap_chain.image_count());
 
         for image_view in swap_chain.image_views() {
             let attachments = [*image_view, depth_stencil_image_view];
             let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
-                .render_pass(render_pass)
+                .render_pass(self.render_pass)
                 .attachments(&attachments)
                 .width(swap_chain.extent().width)
                 .height(swap_chain.extent().height)
@@ -454,7 +450,7 @@ impl RenderPipelineState {
                 .build();
 
             let frame_buffer = unsafe {
-                neuclidio_window
+                vulkan_context
                     .logical_device
                     .create_framebuffer(&frame_buffer_create_info, None)?
             };

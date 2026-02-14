@@ -1,8 +1,10 @@
+use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
 use log::debug;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, DeviceV1_2, HasBuilder};
+use winit::window::WindowId;
 
 pub struct RenderPipelineSynchronizationState {
     image_available_semaphores: Vec<vk::Semaphore>,
@@ -15,6 +17,7 @@ pub struct RenderPipelineSynchronizationState {
 
 impl RenderPipelineSynchronizationState {
     pub fn new(
+        vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
@@ -23,13 +26,13 @@ impl RenderPipelineSynchronizationState {
             neuclidio_window.id
         );
 
-        let frame_index_semaphore = Self::create_timeline_semaphore(neuclidio_window)?;
+        let frame_index_semaphore = Self::create_timeline_semaphore(vulkan_context)?;
         let mut image_available_semaphores = Vec::with_capacity(max_frames_in_flight);
         let mut render_finished_semaphores = Vec::with_capacity(max_frames_in_flight);
 
         for _ in 0..max_frames_in_flight {
-            image_available_semaphores.push(Self::create_semaphore(neuclidio_window)?);
-            render_finished_semaphores.push(Self::create_semaphore(neuclidio_window)?);
+            image_available_semaphores.push(Self::create_semaphore(vulkan_context)?);
+            render_finished_semaphores.push(Self::create_semaphore(vulkan_context)?);
         }
 
         let synchronization = Self {
@@ -44,13 +47,10 @@ impl RenderPipelineSynchronizationState {
         Ok(synchronization)
     }
 
-    pub fn destroy(self, neuclidio_window: &NeuclidioWindow) {
-        let logical_device = &neuclidio_window.logical_device;
+    pub fn destroy(self, vulkan_context: &VulkanContext, window_id: WindowId) {
+        let logical_device = &vulkan_context.logical_device;
 
-        debug!(
-            "Destroying Vulkan semaphores for window with id: {:?}",
-            neuclidio_window.id
-        );
+        debug!("Destroying Vulkan semaphores for window with id: {window_id:?}");
 
         unsafe {
             logical_device.destroy_semaphore(self.frame_index_semaphore, None);
@@ -82,10 +82,10 @@ impl RenderPipelineSynchronizationState {
 
     pub fn frame_index_semaphore_value(
         &self,
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
     ) -> NeuclidioResult<u64> {
         let frame_index_semaphore_value = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .get_semaphore_counter_value(self.frame_index_semaphore)?
         };
@@ -107,7 +107,7 @@ impl RenderPipelineSynchronizationState {
 
     pub fn wait_for_frame_index_semaphore_value(
         &self,
-        neuclidio_window: &NeuclidioWindow,
+        vulkan_context: &VulkanContext,
     ) -> NeuclidioResult<()> {
         if self.frame_index < self.max_frames_in_flight as u64 {
             return Ok(());
@@ -121,7 +121,7 @@ impl RenderPipelineSynchronizationState {
             .build();
 
         unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .wait_semaphores(&semaphore_wait_info, 0)?;
         }
@@ -134,11 +134,11 @@ impl RenderPipelineSynchronizationState {
         self.frame_index += 1;
     }
 
-    fn create_semaphore(neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<vk::Semaphore> {
+    fn create_semaphore(vulkan_context: &VulkanContext) -> NeuclidioResult<vk::Semaphore> {
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
 
         let semaphore = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .create_semaphore(&semaphore_create_info, None)?
         };
@@ -146,9 +146,7 @@ impl RenderPipelineSynchronizationState {
         Ok(semaphore)
     }
 
-    fn create_timeline_semaphore(
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<vk::Semaphore> {
+    fn create_timeline_semaphore(vulkan_context: &VulkanContext) -> NeuclidioResult<vk::Semaphore> {
         let mut semaphore_type_create_info = vk::SemaphoreTypeCreateInfo::builder()
             .semaphore_type(vk::SemaphoreType::TIMELINE)
             .initial_value(0)
@@ -159,7 +157,7 @@ impl RenderPipelineSynchronizationState {
             .build();
 
         let semaphore = unsafe {
-            neuclidio_window
+            vulkan_context
                 .logical_device
                 .create_semaphore(&semaphore_create_info, None)?
         };

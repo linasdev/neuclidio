@@ -2,6 +2,7 @@ use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
 use crate::engine::render::renderable::Renderable;
+use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
@@ -13,6 +14,7 @@ use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_void};
+use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::vk::{
     DeviceV1_0, EntryV1_0, ExtDebugUtilsExtensionInstanceCommands, HasBuilder, InstanceV1_0,
 };
@@ -25,6 +27,7 @@ pub mod error;
 pub mod pipeline;
 
 pub(crate) mod renderable;
+pub(crate) mod vulkan_context;
 pub(crate) mod windowing;
 
 /// Whether the validation layers should be enabled.
@@ -40,190 +43,141 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.na
 /// The Vulkan SDK version that started requiring the portability subset extension for macOS.
 const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
+/// The Vulkan SDK version that included synchronization2 into the core specification
+const SYNCHRONIZATION2_VULKAN_VERSION: Version = Version::new(1, 3, 0);
+
 pub struct RenderEngine {
     application_info: vk::ApplicationInfo,
-    vulkan_entry: Entry,
+    vulkan_context: Option<VulkanContext>,
+    render_pipeline: Option<RenderPipeline>,
     windows: HashMap<WindowId, NeuclidioWindow>,
-    pipelines: HashMap<WindowId, RenderPipeline>,
 }
 
 impl RenderEngine {
-    pub fn new(application_info: vk::ApplicationInfo, vulkan_entry: Entry) -> Self {
+    pub fn new(application_info: vk::ApplicationInfo) -> Self {
         Self {
             application_info,
-            vulkan_entry,
+            vulkan_context: None,
+            render_pipeline: None,
             windows: HashMap::new(),
-            pipelines: HashMap::new(),
         }
     }
 
     pub fn prepare_for_window(&mut self, window: &Window) -> NeuclidioResult<()> {
         let window_id = window.id();
 
-        debug!("Creating Vulkan instance for window with id: {window_id:?}");
-        #[cfg(debug_assertions)]
-        let (instance, debug_messenger) = self.create_instance(window)?;
-
-        #[cfg(not(debug_assertions))]
-        let (instance, _) = self.create_instance(window)?;
-
-        debug!("Creating Vulkan surface for window with id: {window_id:?}");
-        let surface = Self::create_surface(&instance, window)?;
-
-        debug!("Picking Vulkan physical device for window with id: {window_id:?}");
-        let (physical_device, queue_family_indices) =
-            Self::pick_physical_device(&instance, surface)?;
-
-        debug!("Creating Vulkan logical device for window with id: {window_id:?}");
-        let logical_device =
-            self.create_logical_device(&instance, physical_device, queue_family_indices)?;
-
-        let graphics_queue = Self::get_device_queue(&logical_device, queue_family_indices.graphics);
-        let present_queue = Self::get_device_queue(&logical_device, queue_family_indices.present);
+        let surface = if let Some(vulkan_context) = self.vulkan_context.as_ref() {
+            debug!("Creating Vulkan surface for window with id: {window_id:?}");
+            Self::create_surface(&vulkan_context.instance, window)?
+        } else {
+            self.prepare_vulkan(window)?
+        };
 
         let neuclidio_window = NeuclidioWindow {
-            id: window.id(),
-            instance,
-            logical_device,
-            queue_family_indices,
-            physical_device,
+            id: window_id,
             surface,
-            graphics_queue,
-            present_queue,
-            #[cfg(debug_assertions)]
-            debug_messenger: debug_messenger.unwrap(),
             swap_chain: None,
         };
 
-        let pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
-            &neuclidio_window,
-            3, // TODO: Make this configurable
-        )?));
-
         self.windows.insert(window_id, neuclidio_window);
-        self.pipelines.insert(window_id, pipeline);
 
         Ok(())
     }
 
     pub fn render_on_window(&mut self, window: &Window) -> NeuclidioResult<()> {
-        let window_id = window.id();
-        let (neuclidio_window, pipeline) = if let Some(pair) =
-            self.get_window_and_pipeline_mut(window_id)
-        {
-            pair
-        } else {
-            warn!(
-                "Tried to render on window without Vulkan prepared for window with id: {window_id:?}"
-            );
-            return Ok(());
-        };
-
         if let Some(true) = window.is_minimized() {
             return Ok(());
         }
 
-        match pipeline.render(neuclidio_window) {
-            Ok(_) => {}
-            Err(NeuclidioError::RenderError(RenderError::OutOfDateSwapChain)) => {
-                self.handle_window_change(window)?;
-                return Ok(());
+        if let (Some(vulkan_context), Some(render_pipeline), Some(neuclidio_window)) = (
+            self.vulkan_context.as_ref(),
+            self.render_pipeline.as_mut(),
+            self.windows.get(&window.id()),
+        ) {
+            match render_pipeline.render(vulkan_context, neuclidio_window) {
+                Ok(_) => {}
+                Err(NeuclidioError::RenderError(RenderError::OutOfDateSwapChain)) => {
+                    self.handle_window_change(window)?;
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
             }
-            Err(err) => return Err(err),
         }
 
         Ok(())
     }
 
     pub fn handle_window_change(&mut self, window: &Window) -> NeuclidioResult<()> {
-        let window_id = window.id();
+        if let (Some(vulkan_context), Some(neuclidio_window)) = (
+            self.vulkan_context.as_ref(),
+            self.windows.get_mut(&window.id()),
+        ) {
+            unsafe { vulkan_context.logical_device.device_wait_idle()? };
 
-        let neuclidio_window = match self.windows.get_mut(&window_id) {
-            Some(window_data) => window_data,
-            None => {
-                warn!(
-                    "Tried to handle window change without Vulkan prepared for window with id: {window_id:?}"
-                );
-                return Ok(());
+            if let Some(render_pipeline) = self.render_pipeline.as_mut() {
+                render_pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window);
             }
-        };
 
-        unsafe { neuclidio_window.logical_device.device_wait_idle()? };
+            if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
+                swap_chain.destroy(vulkan_context);
+            }
 
-        let mut pipeline = self.pipelines.get_mut(&window_id);
+            let swap_chain = SwapChain::new(
+                window,
+                vulkan_context,
+                neuclidio_window,
+                2,                                                        // TODO: Make configurable
+                &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
+            )?;
 
-        if let Some(pipeline) = pipeline.as_mut() {
-            pipeline.prepare_for_reset(neuclidio_window);
-        }
+            neuclidio_window.swap_chain.replace(swap_chain);
 
-        if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
-            swap_chain.destroy(neuclidio_window);
-        }
-
-        let swap_chain = SwapChain::new(
-            window,
-            neuclidio_window,
-            2,                                                        // TODO: Make configurable
-            &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
-        )?;
-
-        neuclidio_window.swap_chain.replace(swap_chain);
-
-        if let Some(pipeline) = pipeline.as_mut() {
-            pipeline.reset(neuclidio_window)?;
+            if let Some(render_pipeline) = self.render_pipeline.as_mut() {
+                render_pipeline.reset_window(vulkan_context, neuclidio_window)?;
+            }
         }
 
         Ok(())
     }
 
     pub fn clean_up_for_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
-        let neuclidio_window = match self.windows.get_mut(&window_id) {
-            Some(window_data) => window_data,
-            None => {
-                warn!(
-                    "Tried to destroy pipeline without Vulkan prepared for window with id: {window_id:?}"
-                );
-                return Ok(());
+        if let (Some(vulkan_context), Some(neuclidio_window)) = (
+            self.vulkan_context.as_ref(),
+            self.windows.get_mut(&window_id),
+        ) {
+            unsafe { vulkan_context.logical_device.device_wait_idle()? };
+
+            if let Some(render_pipeline) = self.render_pipeline.as_mut() {
+                render_pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window);
             }
-        };
-
-        unsafe { neuclidio_window.logical_device.device_wait_idle()? };
-
-        if let Some(mut pipeline) = self.pipelines.remove(&window_id) {
-            pipeline.prepare_for_reset(neuclidio_window);
 
             if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
-                swap_chain.destroy(neuclidio_window);
+                swap_chain.destroy(vulkan_context);
             }
 
-            pipeline.destroy(neuclidio_window);
+            if let Some(neuclidio_window) = self.windows.remove(&window_id) {
+                neuclidio_window.destroy(vulkan_context);
+            }
         }
-
-        self.windows.remove(&window_id);
 
         Ok(())
     }
 
     pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
-        let (neuclidio_window, pipeline) = if let Some(pair) =
-            self.get_window_and_pipeline_mut(window_id)
-        {
-            pair
-        } else {
-            warn!(
-                "Tried to submit entity for render without Vulkan prepared for window with id: {window_id:?}"
-            );
-            return Ok(());
-        };
-
-        pipeline.submit_entity(neuclidio_window, entity)?;
+        if let (Some(vulkan_context), Some(render_pipeline), Some(neuclidio_window)) = (
+            self.vulkan_context.as_ref(),
+            self.render_pipeline.as_mut(),
+            self.windows.get(&window_id),
+        ) {
+            render_pipeline.submit_entity(vulkan_context, neuclidio_window, entity)?;
+        }
 
         Ok(())
     }
 
     pub fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
-        for pipeline in self.pipelines.values_mut() {
-            pipeline.remove_entity(entity)?;
+        if let Some(render_pipeline) = self.render_pipeline.as_mut() {
+            render_pipeline.remove_entity(entity)?;
         }
 
         Ok(())
@@ -234,24 +188,10 @@ impl RenderEngine {
         entity: &Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
-        let window_ids = self.windows.keys().copied().collect_vec();
-        for window_id in window_ids.into_iter() {
-            if !entity.has_window_id(window_id) {
-                continue;
-            }
-
-            let (neuclidio_window, pipeline) = if let Some(pair) =
-                self.get_window_and_pipeline_mut(window_id)
-            {
-                pair
-            } else {
-                warn!(
-                    "Tried to handle renderable added without Vulkan prepared for window with id: {window_id:?}"
-                );
-                continue;
-            };
-
-            pipeline.handle_renderable_added(neuclidio_window, entity, renderable.clone())?;
+        if let (Some(vulkan_context), Some(render_pipeline)) =
+            (self.vulkan_context.as_ref(), self.render_pipeline.as_mut())
+        {
+            render_pipeline.handle_renderable_added(vulkan_context, entity, renderable)?;
         }
 
         Ok(())
@@ -262,52 +202,82 @@ impl RenderEngine {
         entity: &Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
-        let window_ids = self.windows.keys().copied().collect_vec();
-        for window_id in window_ids.into_iter() {
-            if !entity.has_window_id(window_id) {
-                continue;
-            }
-
-            let pipeline = if let Some(pair) = self.get_window_and_pipeline_mut(window_id) {
-                pair.1
-            } else {
-                warn!(
-                    "Tried to handle renderable removed without Vulkan prepared for window with id: {window_id:?}"
-                );
-                continue;
-            };
-
-            pipeline.handle_renderable_removed(entity, renderable.clone())?;
+        if let Some(render_pipeline) = self.render_pipeline.as_mut() {
+            render_pipeline.handle_renderable_removed(entity, renderable)?;
         }
+
         Ok(())
     }
 
-    fn get_window_and_pipeline_mut(
-        &mut self,
-        window_id: WindowId,
-    ) -> Option<(&NeuclidioWindow, &mut RenderPipeline)> {
-        let neuclidio_window = match self.windows.get(&window_id) {
-            Some(neuclidio_window) => neuclidio_window,
-            None => {
-                return None;
-            }
-        };
-        let pipeline = match self.pipelines.get_mut(&window_id) {
-            Some(pipeline) => pipeline,
-            None => {
-                return None;
-            }
+    fn prepare_vulkan(&mut self, window: &Window) -> NeuclidioResult<vk::SurfaceKHR> {
+        let window_id = window.id();
+
+        let vulkan_entry = unsafe {
+            let loader = LibloadingLoader::new(LIBRARY)?;
+            Entry::new(loader)?
         };
 
-        Some((neuclidio_window, pipeline))
+        debug!("Creating Vulkan instance");
+        #[cfg(debug_assertions)]
+        let (instance, debug_messenger) = self.create_instance(&vulkan_entry, window)?;
+
+        #[cfg(not(debug_assertions))]
+        let (instance, _) = self.create_instance(window)?;
+
+        debug!("Creating Vulkan surface for window with id: {window_id:?}");
+        let surface = Self::create_surface(&instance, window)?;
+
+        debug!("Picking Vulkan physical device");
+        let (physical_device, queue_family_indices, swap_chain_support) =
+            Self::pick_physical_device(&instance, surface)?;
+
+        debug!("Creating Vulkan logical device");
+        let logical_device = self.create_logical_device(
+            &vulkan_entry,
+            &instance,
+            physical_device,
+            queue_family_indices,
+        )?;
+
+        let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
+        let graphics_queue = Self::get_device_queue(&logical_device, queue_family_indices.graphics);
+        let present_queue = Self::get_device_queue(&logical_device, queue_family_indices.present);
+        let transfer_queue = Self::get_device_queue(&logical_device, queue_family_indices.transfer);
+
+        let vulkan_context = VulkanContext {
+            vulkan_entry,
+            instance,
+            logical_device,
+            queue_family_indices,
+            physical_device,
+            graphics_queue,
+            present_queue,
+            transfer_queue,
+            surface_format,
+            #[cfg(debug_assertions)]
+            debug_messenger: debug_messenger.unwrap(),
+        };
+
+        let render_pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
+            &vulkan_context,
+            3, // TODO: Make this configurable
+        )?));
+
+        self.vulkan_context.replace(vulkan_context);
+        self.render_pipeline.replace(render_pipeline);
+
+        Ok(surface)
     }
 
     fn create_instance(
         &self,
+        vulkan_entry: &Entry,
         window: &Window,
     ) -> NeuclidioResult<(Instance, Option<vk::DebugUtilsMessengerEXT>)> {
+        let vulkan_version = vulkan_entry.version()?;
+
         let available_instance_layers: HashSet<_> = unsafe {
-            self.vulkan_entry
+            vulkan_entry
                 .enumerate_instance_layer_properties()?
                 .iter()
                 .map(|layer| layer.layer_name)
@@ -330,9 +300,7 @@ impl RenderEngine {
             .collect();
 
         // Required by Vulkan SDK on macOS since 1.3.216.
-        let flags = if cfg!(target_os = "macos")
-            && self.vulkan_entry.version()? >= PORTABILITY_MACOS_VERSION
-        {
+        let flags = if cfg!(target_os = "macos") && vulkan_version >= PORTABILITY_MACOS_VERSION {
             info!("Enabling extensions for macOS portability");
             extensions.push(
                 vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_EXTENSION
@@ -344,6 +312,10 @@ impl RenderEngine {
         } else {
             vk::InstanceCreateFlags::empty()
         };
+
+        if vulkan_version < SYNCHRONIZATION2_VULKAN_VERSION {
+            extensions.push(vk::KHR_SYNCHRONIZATION2_EXTENSION.name.as_ptr());
+        }
 
         if VALIDATION_ENABLED {
             extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
@@ -374,10 +346,8 @@ impl RenderEngine {
                 .push_next(debug_messenger_create_info.as_mut().unwrap());
         }
 
-        let instance = unsafe {
-            self.vulkan_entry
-                .create_instance(&instance_create_info_builder.build(), None)?
-        };
+        let instance =
+            unsafe { vulkan_entry.create_instance(&instance_create_info_builder.build(), None)? };
         let debug_messenger = if let Some(debug_messenger_create_info) = debug_messenger_create_info
         {
             unsafe {
@@ -395,10 +365,20 @@ impl RenderEngine {
 
     fn create_logical_device(
         &self,
+        vulkan_entry: &Entry,
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
         queue_family_indices: QueueFamilyIndices,
     ) -> NeuclidioResult<Device> {
+        let physical_device_vulkan_version = unsafe {
+            Version::from(
+                instance
+                    .get_physical_device_properties(physical_device)
+                    .api_version,
+            )
+        };
+        let vulkan_version = vulkan_entry.version()?.min(physical_device_vulkan_version);
+
         let queue_priorities = [1.0];
         let queue_infos: Vec<_> = queue_family_indices
             .unique()
@@ -423,8 +403,12 @@ impl RenderEngine {
             .collect();
 
         // Required by Vulkan SDK on macOS since 1.3.216.
-        if cfg!(target_os = "macos") && self.vulkan_entry.version()? >= PORTABILITY_MACOS_VERSION {
+        if cfg!(target_os = "macos") && vulkan_version >= PORTABILITY_MACOS_VERSION {
             extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
+        }
+
+        if vulkan_version < SYNCHRONIZATION2_VULKAN_VERSION {
+            extensions.push(vk::KHR_SYNCHRONIZATION2_EXTENSION.name.as_ptr());
         }
 
         let mut timeline_semaphore_features =
@@ -432,9 +416,14 @@ impl RenderEngine {
                 .timeline_semaphore(true)
                 .build();
 
+        let mut synchronization2_features = vk::PhysicalDeviceSynchronization2Features::builder()
+            .synchronization2(true)
+            .build();
+
         let features = vk::PhysicalDeviceFeatures::builder().build();
         let mut features2 = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut timeline_semaphore_features)
+            .push_next(&mut synchronization2_features)
             .features(features)
             .build();
 
@@ -456,10 +445,23 @@ impl RenderEngine {
         Ok(surface)
     }
 
+    fn get_surface_format(
+        available_surface_formats: &[vk::SurfaceFormatKHR],
+    ) -> NeuclidioResult<vk::SurfaceFormatKHR> {
+        available_surface_formats
+            .iter()
+            .cloned()
+            .find_or_first(|surface_format| {
+                surface_format.format == vk::Format::B8G8R8A8_SRGB
+                    && surface_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            })
+            .ok_or(RenderError::MissingSurfaceFormat.into())
+    }
+
     fn pick_physical_device(
         instance: &Instance,
         surface: vk::SurfaceKHR,
-    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices)> {
+    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices, SwapChainSupport)> {
         let mut viable_physical_devices = vec![];
 
         unsafe {
@@ -473,9 +475,11 @@ impl RenderEngine {
                             properties.device_name, err
                         );
                     }
-                    Ok(queue_family_indices) => {
-                        viable_physical_devices
-                            .push(((physical_device, queue_family_indices), properties));
+                    Ok((queue_family_indices, swap_chain_support)) => {
+                        viable_physical_devices.push((
+                            (physical_device, queue_family_indices, swap_chain_support),
+                            properties,
+                        ));
                     }
                 }
             }
@@ -508,13 +512,13 @@ impl RenderEngine {
         instance: &Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> NeuclidioResult<QueueFamilyIndices> {
+    ) -> NeuclidioResult<(QueueFamilyIndices, SwapChainSupport)> {
         let queue_family_indices = QueueFamilyIndices::new(instance, surface, physical_device)?;
+        let swap_chain_support = SwapChainSupport::new(instance, surface, physical_device)?;
         DeviceExtensionSupport::new(instance, physical_device, DEVICE_EXTENSIONS)?;
-        SwapChainSupport::new(instance, surface, physical_device)?;
         SynchronizationSupport::new(instance, physical_device)?;
 
-        Ok(queue_family_indices)
+        Ok((queue_family_indices, swap_chain_support))
     }
 
     fn rate_physical_device(physical_device_properties: vk::PhysicalDeviceProperties) -> u32 {
@@ -533,6 +537,18 @@ impl RenderEngine {
 
     fn get_device_queue(logical_device: &Device, index: u32) -> vk::Queue {
         unsafe { logical_device.get_device_queue(index, 0) }
+    }
+}
+
+impl Drop for RenderEngine {
+    fn drop(&mut self) {
+        if let Some(vulkan_context) = self.vulkan_context.take() {
+            if let Some(render_pipeline) = self.render_pipeline.take() {
+                render_pipeline.destroy(&vulkan_context);
+            }
+
+            vulkan_context.destroy();
+        }
     }
 }
 

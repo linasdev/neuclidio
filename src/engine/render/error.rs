@@ -17,10 +17,11 @@ pub enum RenderError {
     MissingTimelineSemaphoreSupport,
     MissingDeviceExtensions,
     MissingSurfaceFormat,
-    MissingImageFormat,
+    MissingDepthStencilImageFormat,
     MissingPresentMode,
     MissingValidationLayer,
     OutOfDateSwapChain,
+    MissingSynchronization2Support,
 }
 
 impl From<WindowingError> for RenderError {

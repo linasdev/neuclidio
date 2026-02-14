@@ -49,6 +49,15 @@ impl Entity {
         self.window_ids.lock().unwrap().clear();
     }
 
+    pub(crate) fn do_with_each_window_id<F>(&self, mut f: F)
+    where
+        F: FnMut(WindowId),
+    {
+        for window_id in self.window_ids.lock().unwrap().iter().copied() {
+            f(window_id);
+        }
+    }
+
     pub fn do_with_transform<T, F>(&self, mut f: F) -> bool
     where
         T: TransformExt,

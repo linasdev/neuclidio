@@ -1,22 +1,24 @@
 use crate::component::mesh::Mesh;
 use crate::id::{RenderBufferId, RenderableId};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use vulkanalia::vk;
 use vulkanalia_vma::VirtualAllocation;
+use winit::window::WindowId;
 
 pub struct RenderableMemoryAllocation {
     pub render_buffer_id: RenderBufferId,
     pub virtual_allocation: VirtualAllocation,
     pub offset: vk::DeviceSize,
-    pub last_used_in_frame: Arc<Mutex<Option<u64>>>,
+    pub last_used_in_frame: Arc<Mutex<HashMap<WindowId, u64>>>,
 }
 
 pub trait RenderableExt: Into<Renderable> {
     fn id(&self) -> RenderableId;
     fn render_buffer_id(&self) -> Option<RenderBufferId>;
     fn render_buffer_offset(&self) -> Option<vk::DeviceSize>;
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>>;
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<HashMap<WindowId, u64>>>>;
     fn set_memory_allocation(
         &self,
         new_memory_allocation: Option<RenderableMemoryAllocation>,
@@ -53,7 +55,7 @@ impl RenderableExt for Renderable {
         }
     }
 
-    fn last_used_in_frame(&self) -> Option<Arc<Mutex<Option<u64>>>> {
+    fn last_used_in_frame(&self) -> Option<Arc<Mutex<HashMap<WindowId, u64>>>> {
         match self {
             Renderable::Mesh(mesh) => mesh.last_used_in_frame(),
         }
