@@ -2,11 +2,13 @@ use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use log::debug;
 use vulkanalia::vk::{DeviceV1_0, ExtDebugUtilsExtensionInstanceCommands, InstanceV1_0};
 use vulkanalia::{Device, Entry, Instance, vk};
+use vulkanalia_vma::Allocator;
 
 pub struct VulkanContext {
     pub vulkan_entry: Entry,
     pub instance: Instance,
     pub logical_device: Device,
+    pub allocator: Allocator,
     pub queue_family_indices: QueueFamilyIndices,
     pub physical_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
@@ -20,6 +22,10 @@ pub struct VulkanContext {
 
 impl VulkanContext {
     pub fn destroy(self) {
+        debug!("Destroying Vulkan Memory Allocator");
+
+        drop(self.allocator);
+
         debug!("Destroying Vulkan logical device");
 
         unsafe {

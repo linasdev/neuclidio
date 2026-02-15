@@ -487,6 +487,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
             },
         )?;
         self.allocator_state.fill_uniform_buffer(
+            vulkan_context,
             neuclidio_window,
             image_index,
             |uniform_buffer_memory| {

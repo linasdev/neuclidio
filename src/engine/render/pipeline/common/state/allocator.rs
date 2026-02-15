@@ -1,8 +1,8 @@
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::common::state::transfer::RenderPipelineTransferState;
 use crate::engine::render::pipeline::common::state::window::RenderPipelineWindowState;
-use crate::engine::render::pipeline::create_buffer;
 use crate::engine::render::pipeline::error::RenderPipelineError;
+use crate::engine::render::pipeline::{create_buffer, get_supported_image_format};
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
@@ -32,7 +32,6 @@ pub struct RenderBuffer {
 }
 
 pub struct RenderPipelineAllocatorState {
-    allocator: Allocator,
     render_buffers: HashMap<RenderBufferId, RenderBuffer>,
     renderables_pending_deallocation: Vec<Renderable>,
     depth_stencil_image_format: vk::Format,
@@ -41,16 +40,7 @@ pub struct RenderPipelineAllocatorState {
 
 impl RenderPipelineAllocatorState {
     pub fn new(vulkan_context: &VulkanContext) -> NeuclidioResult<Self> {
-        debug!("Creating Vulkan Memory Allocator");
-
-        let allocator_options = AllocatorOptions::new(
-            &vulkan_context.instance,
-            &vulkan_context.logical_device,
-            vulkan_context.physical_device,
-        );
-        let allocator = unsafe { Allocator::new(&allocator_options)? };
-
-        let depth_stencil_image_format = Self::get_depth_stencil_image_format(
+        let depth_stencil_image_format = get_supported_image_format(
             vulkan_context,
             vk::ImageTiling::OPTIMAL,
             vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -58,10 +48,9 @@ impl RenderPipelineAllocatorState {
                 vk::Format::D32_SFLOAT_S8_UINT,
                 vk::Format::D24_UNORM_S8_UINT,
             ],
-        )?;
+        ).ok_or(RenderError::MissingDepthStencilImageFormat)?;
 
         Ok(Self {
-            allocator,
             render_buffers: HashMap::new(),
             renderables_pending_deallocation: vec![],
             depth_stencil_image_format,
@@ -75,7 +64,7 @@ impl RenderPipelineAllocatorState {
         neuclidio_window: &NeuclidioWindow,
     ) {
         if let Some(window_state) = self.window_states.remove(&neuclidio_window.id) {
-            window_state.destroy(vulkan_context, &self.allocator);
+            window_state.destroy(vulkan_context, &vulkan_context.allocator);
         }
     }
 
@@ -90,7 +79,7 @@ impl RenderPipelineAllocatorState {
 
         let depth_stencil_image = Self::create_depth_stencil_image(
             neuclidio_window,
-            &self.allocator,
+            &vulkan_context.allocator,
             self.depth_stencil_image_format,
             vk::ImageTiling::OPTIMAL,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -107,7 +96,7 @@ impl RenderPipelineAllocatorState {
         debug!("Creating Vulkan uniform buffers for window with id: {window_id:?}");
 
         let uniform_buffers =
-            Self::create_uniform_buffers(neuclidio_window, &self.allocator, uniform_buffer_size)?;
+            Self::create_uniform_buffers(neuclidio_window, &vulkan_context.allocator, uniform_buffer_size)?;
 
         let window_state = RenderPipelineAllocatorWindowState {
             window_id,
@@ -127,18 +116,14 @@ impl RenderPipelineAllocatorState {
         for render_buffer in self.render_buffers.into_values() {
             render_buffer.virtual_block.clear();
             unsafe {
-                self.allocator
+                vulkan_context.allocator
                     .destroy_buffer(render_buffer.buffer, render_buffer.allocation);
             }
         }
 
         for window_state in self.window_states.into_values() {
-            window_state.destroy(vulkan_context, &self.allocator);
+            window_state.destroy(vulkan_context, &vulkan_context.allocator);
         }
-
-        debug!("Destroying Vulkan Memory Allocator");
-
-        drop(self.allocator);
     }
 
     pub fn submit_renderables(
@@ -148,7 +133,7 @@ impl RenderPipelineAllocatorState {
         renderables: &[Renderable],
     ) -> NeuclidioResult<()> {
         for renderable in renderables {
-            self.allocate_renderable(renderable)?;
+            self.allocate_renderable(vulkan_context, renderable)?;
         }
 
         let mut uncopied_renderables: Vec<&Renderable> = vec![];
@@ -247,7 +232,7 @@ impl RenderPipelineAllocatorState {
             let renderable = self
                 .renderables_pending_deallocation
                 .remove(renderable_index);
-            self.deallocate_renderable(&renderable)?;
+            self.deallocate_renderable(vulkan_context, &renderable)?;
         }
 
         Ok(())
@@ -255,6 +240,7 @@ impl RenderPipelineAllocatorState {
 
     pub fn fill_uniform_buffer<UBF>(
         &mut self,
+        vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
         image_index: usize,
         mut uniform_buffer_filler: UBF,
@@ -265,13 +251,13 @@ impl RenderPipelineAllocatorState {
         let uniform_buffer = self.uniform_buffers(neuclidio_window)?[image_index];
 
         let uniform_buffer_memory: *mut u8 =
-            unsafe { self.allocator.map_memory(uniform_buffer.1)? };
+            unsafe { vulkan_context.allocator.map_memory(uniform_buffer.1)? };
 
         uniform_buffer_filler(uniform_buffer_memory)?;
 
         unsafe {
-            self.allocator.unmap_memory(uniform_buffer.1);
-            self.allocator
+            vulkan_context.allocator.unmap_memory(uniform_buffer.1);
+            vulkan_context.allocator
                 .flush_allocation(uniform_buffer.1, 0, vk::WHOLE_SIZE)?;
         }
 
@@ -332,40 +318,6 @@ impl RenderPipelineAllocatorState {
         }
 
         Ok(uniform_buffers)
-    }
-
-    fn get_depth_stencil_image_format(
-        vulkan_context: &VulkanContext,
-        image_tiling: vk::ImageTiling,
-        format_features: vk::FormatFeatureFlags,
-        preferred_formats: &[vk::Format],
-    ) -> NeuclidioResult<vk::Format> {
-        for preferred_format in preferred_formats.iter() {
-            let properties = unsafe {
-                vulkan_context
-                    .instance
-                    .get_physical_device_format_properties(
-                        vulkan_context.physical_device,
-                        *preferred_format,
-                    )
-            };
-
-            match image_tiling {
-                vk::ImageTiling::LINEAR => {
-                    if properties.linear_tiling_features.contains(format_features) {
-                        return Ok(*preferred_format);
-                    }
-                }
-                vk::ImageTiling::OPTIMAL => {
-                    if properties.optimal_tiling_features.contains(format_features) {
-                        return Ok(*preferred_format);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Err(RenderError::MissingDepthStencilImageFormat.into())
     }
 
     fn create_depth_stencil_image(
@@ -436,7 +388,7 @@ impl RenderPipelineAllocatorState {
         Ok(depth_stencil_image_view)
     }
 
-    fn allocate_renderable(&mut self, renderable: &Renderable) -> NeuclidioResult<()> {
+    fn allocate_renderable(&mut self, vulkan_context: &VulkanContext, renderable: &Renderable) -> NeuclidioResult<()> {
         if renderable.render_buffer_id().is_some() {
             warn!(
                 "Tried to double allocate a renderable with id: {:?}",
@@ -481,7 +433,7 @@ impl RenderPipelineAllocatorState {
         };
 
         let (buffer, allocation) = create_buffer(
-            &self.allocator,
+            &vulkan_context.allocator,
             virtual_block_size,
             vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::VERTEX_BUFFER
@@ -514,7 +466,7 @@ impl RenderPipelineAllocatorState {
         Ok(())
     }
 
-    fn deallocate_renderable(&mut self, renderable: &Renderable) -> NeuclidioResult<()> {
+    fn deallocate_renderable(&mut self, vulkan_context: &VulkanContext, renderable: &Renderable) -> NeuclidioResult<()> {
         if let Some(renderable_memory_allocation) = renderable.set_memory_allocation(None)
             && let Some(render_buffer) = self
                 .render_buffers
@@ -532,7 +484,7 @@ impl RenderPipelineAllocatorState {
                     debug!("Destroying Vulkan render buffer with id: {render_buffer_id}");
 
                     unsafe {
-                        self.allocator
+                        vulkan_context.allocator
                             .destroy_buffer(render_buffer.buffer, render_buffer.allocation);
                     }
                 }
@@ -579,7 +531,7 @@ impl RenderPipelineAllocatorState {
             .sum();
 
         let staging_render_buffer = create_buffer(
-            &self.allocator,
+            &vulkan_context.allocator,
             staging_render_buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             MemoryUsage::AutoPreferHost,
@@ -587,15 +539,15 @@ impl RenderPipelineAllocatorState {
         )?;
 
         let staging_render_buffer_memory: *mut u8 =
-            unsafe { self.allocator.map_memory(staging_render_buffer.1)? };
+            unsafe { vulkan_context.allocator.map_memory(staging_render_buffer.1)? };
 
         for renderable in renderables {
             renderable.load_into_staging_render_buffer(staging_render_buffer_memory);
         }
 
         unsafe {
-            self.allocator.unmap_memory(staging_render_buffer.1);
-            self.allocator
+            vulkan_context.allocator.unmap_memory(staging_render_buffer.1);
+            vulkan_context.allocator
                 .flush_allocation(staging_render_buffer.1, 0, vk::WHOLE_SIZE)?;
         }
 
@@ -610,7 +562,7 @@ impl RenderPipelineAllocatorState {
         )?;
 
         unsafe {
-            self.allocator
+            vulkan_context.allocator
                 .destroy_buffer(staging_render_buffer.0, staging_render_buffer.1);
         }
 

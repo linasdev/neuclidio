@@ -5,7 +5,7 @@ use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::error::NeuclidioResult;
 use vulkanalia::vk;
-use vulkanalia::vk::HasBuilder;
+use vulkanalia::vk::{HasBuilder, InstanceV1_0};
 use vulkanalia_vma::{
     Alloc, Allocation, AllocationCreateFlags, AllocationOptions, Allocator, MemoryUsage,
 };
@@ -166,4 +166,38 @@ pub(crate) fn create_buffer(
     let buffer_allocation =
         unsafe { allocator.create_buffer(buffer_create_info, &allocation_options)? };
     Ok(buffer_allocation)
+}
+
+fn get_supported_image_format(
+    vulkan_context: &VulkanContext,
+    image_tiling: vk::ImageTiling,
+    format_features: vk::FormatFeatureFlags,
+    preferred_formats: &[vk::Format],
+) -> Option<vk::Format> {
+    for preferred_format in preferred_formats.iter() {
+        let properties = unsafe {
+            vulkan_context
+                .instance
+                .get_physical_device_format_properties(
+                    vulkan_context.physical_device,
+                    *preferred_format,
+                )
+        };
+
+        match image_tiling {
+            vk::ImageTiling::LINEAR => {
+                if properties.linear_tiling_features.contains(format_features) {
+                    return Some(*preferred_format);
+                }
+            }
+            vk::ImageTiling::OPTIMAL => {
+                if properties.optimal_tiling_features.contains(format_features) {
+                    return Some(*preferred_format);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }

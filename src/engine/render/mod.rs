@@ -20,6 +20,7 @@ use vulkanalia::vk::{
 };
 use vulkanalia::window as vk_window;
 use vulkanalia::{Device, Entry, Instance, Version, vk};
+use vulkanalia_vma::{Allocator, AllocatorOptions};
 use winit::window::{Window, WindowId};
 
 pub mod builder;
@@ -239,6 +240,15 @@ impl RenderEngine {
             queue_family_indices,
         )?;
 
+        debug!("Creating Vulkan Memory Allocator");
+
+        let allocator_options = AllocatorOptions::new(
+            &instance,
+            &logical_device,
+            physical_device,
+        );
+        let allocator = unsafe { Allocator::new(&allocator_options)? };
+
         let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
         let graphics_queue = Self::get_device_queue(&logical_device, queue_family_indices.graphics);
         let present_queue = Self::get_device_queue(&logical_device, queue_family_indices.present);
@@ -248,6 +258,7 @@ impl RenderEngine {
             vulkan_entry,
             instance,
             logical_device,
+            allocator,
             queue_family_indices,
             physical_device,
             graphics_queue,
