@@ -14,9 +14,7 @@ pub struct RenderPipelineSynchronizationState {
 }
 
 impl RenderPipelineSynchronizationState {
-    pub fn new(
-        max_frames_in_flight: usize,
-    ) -> NeuclidioResult<Self> {
+    pub fn new(max_frames_in_flight: usize) -> NeuclidioResult<Self> {
         let window_states = HashMap::new();
 
         let synchronization = Self {
@@ -87,12 +85,13 @@ impl RenderPipelineSynchronizationState {
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
-    pub fn frame_index_semaphore(&self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<vk::Semaphore> {
+    pub fn frame_index_semaphore(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<vk::Semaphore> {
         self.window_states
             .get(&neuclidio_window.id)
-            .map(|window_state| {
-                window_state.frame_index_semaphore
-            })
+            .map(|window_state| window_state.frame_index_semaphore)
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
@@ -102,8 +101,12 @@ impl RenderPipelineSynchronizationState {
         vulkan_context: &VulkanContext,
         window_id: WindowId,
     ) -> NeuclidioResult<u64> {
-        let frame_index_semaphore = self.window_states.get(&window_id).ok_or(RenderPipelineError::Unprepared)?.frame_index_semaphore;
-        let frame_index_semaphore_value= unsafe {
+        let frame_index_semaphore = self
+            .window_states
+            .get(&window_id)
+            .ok_or(RenderPipelineError::Unprepared)?
+            .frame_index_semaphore;
+        let frame_index_semaphore_value = unsafe {
             vulkan_context
                 .logical_device
                 .get_semaphore_counter_value(frame_index_semaphore)?
@@ -118,7 +121,7 @@ impl RenderPipelineSynchronizationState {
         neuclidio_window: &NeuclidioWindow,
     ) -> NeuclidioResult<u64> {
         let frame_index_semaphore = self.frame_index_semaphore(neuclidio_window)?;
-        let frame_index_semaphore_value= unsafe {
+        let frame_index_semaphore_value = unsafe {
             vulkan_context
                 .logical_device
                 .get_semaphore_counter_value(frame_index_semaphore)?
@@ -130,13 +133,14 @@ impl RenderPipelineSynchronizationState {
     pub fn frame_index(&self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<u64> {
         self.window_states
             .get(&neuclidio_window.id)
-            .map(|window_state| {
-                window_state.frame_index
-            })
+            .map(|window_state| window_state.frame_index)
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
-    pub fn frame_index_semaphore_required_value(&self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<u64> {
+    pub fn frame_index_semaphore_required_value(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<u64> {
         let frame_index = self.frame_index(neuclidio_window)?;
         if frame_index < self.max_frames_in_flight as u64 {
             Ok(0)
@@ -151,7 +155,8 @@ impl RenderPipelineSynchronizationState {
         neuclidio_window: &NeuclidioWindow,
     ) -> NeuclidioResult<()> {
         let frame_index_semaphore = self.frame_index_semaphore(neuclidio_window)?;
-        let frame_index_semaphore_required_value = self.frame_index_semaphore_required_value(neuclidio_window)?;
+        let frame_index_semaphore_required_value =
+            self.frame_index_semaphore_required_value(neuclidio_window)?;
 
         if frame_index_semaphore_required_value == 0 {
             return Ok(());
@@ -174,11 +179,15 @@ impl RenderPipelineSynchronizationState {
     }
 
     pub fn increment_frame(&mut self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<()> {
-        self.window_states.get_mut(&neuclidio_window.id).map(|window_state| {
-            window_state.frame_in_flight_index = (window_state.frame_in_flight_index + 1) % self.max_frames_in_flight;
-            window_state.frame_index += 1;
-            ()
-        }).ok_or(RenderPipelineError::Unprepared.into())
+        self.window_states
+            .get_mut(&neuclidio_window.id)
+            .map(|window_state| {
+                window_state.frame_in_flight_index =
+                    (window_state.frame_in_flight_index + 1) % self.max_frames_in_flight;
+                window_state.frame_index += 1;
+                ()
+            })
+            .ok_or(RenderPipelineError::Unprepared.into())
     }
 }
 

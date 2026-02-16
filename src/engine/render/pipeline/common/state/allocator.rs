@@ -1,7 +1,7 @@
 use crate::engine::render::pipeline::common::state::synchronization::RenderPipelineSynchronizationState;
 use crate::engine::render::pipeline::common::state::transfer::RenderPipelineTransferState;
-use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::create_buffer;
+use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
@@ -187,9 +187,17 @@ impl RenderPipelineAllocatorState {
         vulkan_context: &VulkanContext,
         synchronization_state: &RenderPipelineSynchronizationState,
     ) -> NeuclidioResult<()> {
-        let frame_index_semaphore_values = self.window_states.keys().map(|window_id| {
-            Ok((*window_id, synchronization_state.frame_index_semaphore_value_by_window_id(vulkan_context, *window_id)?))
-        }).collect::<NeuclidioResult<HashMap<_, _>>>()?;
+        let frame_index_semaphore_values = self
+            .window_states
+            .keys()
+            .map(|window_id| {
+                Ok((
+                    *window_id,
+                    synchronization_state
+                        .frame_index_semaphore_value_by_window_id(vulkan_context, *window_id)?,
+                ))
+            })
+            .collect::<NeuclidioResult<HashMap<_, _>>>()?;
 
         let mut renderables_to_deallocate = vec![];
         for (renderable_index, renderable) in

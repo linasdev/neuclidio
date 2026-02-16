@@ -76,8 +76,11 @@ impl StandardRenderPipeline {
             &ViewProjectionUniform::descriptor_set_layout_bindings(),
             max_frames_in_flight,
         )?;
-        let allocator_state =
-            RenderPipelineAllocatorState::new(color_image_format, depth_stencil_image_format, max_frames_in_flight)?;
+        let allocator_state = RenderPipelineAllocatorState::new(
+            color_image_format,
+            depth_stencil_image_format,
+            max_frames_in_flight,
+        )?;
         let pipeline_state = RenderPipelineState::new(
             vulkan_context,
             &descriptor_state,
@@ -298,7 +301,7 @@ impl StandardRenderPipeline {
             last_used_in_frame
                 .lock()
                 .unwrap()
-                .insert(neuclidio_window.id,  frame_index + 1);
+                .insert(neuclidio_window.id, frame_index + 1);
         }
 
         unsafe {
@@ -488,8 +491,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
             Err(err) => return Err(err.into()),
         };
 
-        self
-            .synchronization_state
+        self.synchronization_state
             .wait_for_frame_index_semaphore_value(vulkan_context, neuclidio_window)?;
 
         self.command_state.record_command_buffer(
@@ -524,10 +526,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .frame_index_semaphore_required_value(neuclidio_window)?;
         let next_frame_index = self.synchronization_state.frame_index(neuclidio_window)? + 1;
 
-        let wait_semaphore_values = [
-            0,
-            frame_index_semaphore_required_value,
-        ];
+        let wait_semaphore_values = [0, frame_index_semaphore_required_value];
         let signal_semaphore_values = [0, next_frame_index];
         let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
             .wait_semaphore_values(&wait_semaphore_values)
@@ -546,21 +545,17 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .synchronization_state
             .frame_index_semaphore(neuclidio_window)?;
 
-        let command_buffer = self.command_state.command_buffer(neuclidio_window, image_index)?;
+        let command_buffer = self
+            .command_state
+            .command_buffer(neuclidio_window, image_index)?;
 
-        let wait_semaphores = [
-            current_image_available_semaphore,
-            frame_index_semaphore,
-        ];
+        let wait_semaphores = [current_image_available_semaphore, frame_index_semaphore];
         let wait_dst_stage_mask = [
             vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             vk::PipelineStageFlags::TOP_OF_PIPE,
         ];
         let command_buffers = [command_buffer];
-        let signal_semaphores = [
-            current_render_finished_semaphore,
-            frame_index_semaphore,
-        ];
+        let signal_semaphores = [current_render_finished_semaphore, frame_index_semaphore];
         let submit_info = vk::SubmitInfo::builder()
             .push_next(&mut timeline_semaphore_submit_info)
             .wait_semaphores(&wait_semaphores)
@@ -590,7 +585,8 @@ impl RenderPipelineExt for StandardRenderPipeline {
             logical_device.queue_present_khr(vulkan_context.present_queue, &present_info)?;
         }
 
-        self.synchronization_state.increment_frame(neuclidio_window)?;
+        self.synchronization_state
+            .increment_frame(neuclidio_window)?;
 
         Ok(())
     }
@@ -629,7 +625,8 @@ impl RenderPipelineExt for StandardRenderPipeline {
             neuclidio_window,
             &self.allocator_state,
         )?;
-        self.synchronization_state.reset_window(vulkan_context, neuclidio_window)?;
+        self.synchronization_state
+            .reset_window(vulkan_context, neuclidio_window)?;
         self.command_state
             .reset_window(vulkan_context, neuclidio_window)?;
 
