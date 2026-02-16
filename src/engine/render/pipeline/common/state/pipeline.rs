@@ -16,7 +16,8 @@ pub struct RenderPipelineState {
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
-    frame_buffers: HashMap<WindowId, Vec<vk::Framebuffer>>,
+    window_states: HashMap<WindowId, RenderPipelineWindowState>,
+    max_frames_in_flight: usize,
 }
 
 impl RenderPipelineState {
@@ -27,6 +28,7 @@ impl RenderPipelineState {
         push_constant_ranges: &[vk::PushConstantRange],
         vertex_shader_bytecode: &[u8],
         fragment_shader_bytecode: &[u8],
+        max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
         let logical_device = &vulkan_context.logical_device;
 
@@ -87,13 +89,14 @@ impl RenderPipelineState {
         Self::destroy_shader_module(logical_device, vertex_shader_module);
         Self::destroy_shader_module(logical_device, fragment_shader_module);
 
-        let frame_buffers = HashMap::new();
+        let window_states = HashMap::new();
 
         Ok(Self {
             pipeline,
             pipeline_layout,
             render_pass,
-            frame_buffers,
+            window_states,
+            max_frames_in_flight,
         })
     }
 
@@ -102,19 +105,8 @@ impl RenderPipelineState {
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
     ) {
-        if let Some(frame_buffers) = self.frame_buffers.remove(&neuclidio_window.id) {
-            debug!(
-                "Destroying Vulkan frame buffers for window with id: {:?}",
-                neuclidio_window.id
-            );
-
-            for frame_buffer in frame_buffers.into_iter() {
-                unsafe {
-                    vulkan_context
-                        .logical_device
-                        .destroy_framebuffer(frame_buffer, None);
-                }
-            }
+        if let Some(window_state) = self.window_states.get_mut(&neuclidio_window.id) {
+            window_state.prepare_for_window_reset(vulkan_context);
         }
     }
 
@@ -124,20 +116,46 @@ impl RenderPipelineState {
         neuclidio_window: &NeuclidioWindow,
         allocator_state: &RenderPipelineAllocatorState,
     ) -> NeuclidioResult<()> {
-        debug!(
-            "Creating Vulkan frame buffers for window with id: {:?}",
-            neuclidio_window.id
-        );
+        if let Some(window_state) = self.window_states.get_mut(&neuclidio_window.id) {
+            window_state.reset_window(
+                vulkan_context,
+                neuclidio_window,
+                allocator_state,
+                self.render_pass,
+                self.max_frames_in_flight,
+            )?;
+            return Ok(());
+        }
 
-        let frame_buffers =
-            self.create_frame_buffers(vulkan_context, neuclidio_window, allocator_state)?;
-        self.frame_buffers
-            .insert(neuclidio_window.id, frame_buffers);
+        let mut window_state = RenderPipelineWindowState::new(neuclidio_window);
+        window_state.reset_window(
+            vulkan_context,
+            neuclidio_window,
+            allocator_state,
+            self.render_pass,
+            self.max_frames_in_flight,
+        )?;
+
+        self.window_states.insert(neuclidio_window.id, window_state);
 
         Ok(())
     }
 
+    pub fn clean_up_for_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) {
+        if let Some(window_state) = self.window_states.remove(&neuclidio_window.id) {
+            window_state.destroy(vulkan_context);
+        }
+    }
+
     pub fn destroy(self, vulkan_context: &VulkanContext) {
+        for window_state in self.window_states.into_values() {
+            window_state.destroy(vulkan_context);
+        }
+
         let logical_device = &vulkan_context.logical_device;
 
         debug!("Destroying Vulkan pipeline");
@@ -174,12 +192,12 @@ impl RenderPipelineState {
     pub fn frame_buffer(
         &self,
         neuclidio_window: &NeuclidioWindow,
-        frame_buffer_index: usize,
+        frame_in_flight_index: usize,
     ) -> Option<vk::Framebuffer> {
-        self.frame_buffers
+        self.window_states
             .get(&neuclidio_window.id)
-            .and_then(|frame_buffers| frame_buffers.get(frame_buffer_index))
-            .map(|frame_buffer| *frame_buffer)
+            .and_then(|window_state| window_state.frame_buffers.as_ref())
+            .map(|frame_buffers| frame_buffers[frame_in_flight_index])
     }
 
     fn create_shader_module(
@@ -423,26 +441,95 @@ impl RenderPipelineState {
 
         Ok(render_pass)
     }
+}
 
-    fn create_frame_buffers(
-        &self,
+pub struct RenderPipelineWindowState {
+    window_id: WindowId,
+    frame_buffers: Option<Vec<vk::Framebuffer>>,
+}
+
+impl RenderPipelineWindowState {
+    fn new(neuclidio_window: &NeuclidioWindow) -> Self {
+        let window_id = neuclidio_window.id;
+
+        Self {
+            window_id,
+            frame_buffers: None,
+        }
+    }
+
+    fn prepare_for_window_reset(&mut self, vulkan_context: &VulkanContext) {
+        if let Some(frame_buffers) = self.frame_buffers.take() {
+            debug!(
+                "Destroying Vulkan frame buffers for window with id: {:?}",
+                self.window_id
+            );
+
+            for frame_buffer in frame_buffers.into_iter() {
+                unsafe {
+                    vulkan_context
+                        .logical_device
+                        .destroy_framebuffer(frame_buffer, None);
+                }
+            }
+        }
+    }
+
+    fn reset_window(
+        &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
         allocator_state: &RenderPipelineAllocatorState,
+        render_pass: vk::RenderPass,
+        max_frames_in_flight: usize,
+    ) -> NeuclidioResult<()> {
+        debug!(
+            "Creating Vulkan frame buffers for window with id: {:?}",
+            self.window_id
+        );
+
+        let frame_buffers = Self::create_frame_buffers(
+            vulkan_context,
+            neuclidio_window,
+            allocator_state,
+            render_pass,
+            max_frames_in_flight,
+        )?;
+
+        self.frame_buffers = Some(frame_buffers);
+
+        Ok(())
+    }
+
+    fn destroy(mut self, vulkan_context: &VulkanContext) {
+        self.prepare_for_window_reset(vulkan_context);
+    }
+
+    fn create_frame_buffers(
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+        allocator_state: &RenderPipelineAllocatorState,
+        render_pass: vk::RenderPass,
+        max_frames_in_flight: usize,
     ) -> NeuclidioResult<Vec<vk::Framebuffer>> {
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
-        let depth_stencil_image_view =
-            allocator_state.depth_stencil_image_view(neuclidio_window)?;
 
-        let mut frame_buffers = Vec::with_capacity(swap_chain.image_count());
+        let mut frame_buffers = Vec::with_capacity(max_frames_in_flight);
 
-        for image_view in swap_chain.image_views() {
-            let attachments = [*image_view, depth_stencil_image_view];
+        for frame_in_flight_index in 0..max_frames_in_flight {
+            // TODO: Swap this over to the offscreen image views
+            let color_image_view = *swap_chain.image_views().get(frame_in_flight_index).unwrap();
+            // let color_image_view =
+            //     allocator_state.color_image_view(neuclidio_window, frame_in_flight_index)?;
+            let depth_stencil_image_view = allocator_state
+                .depth_stencil_image_view(neuclidio_window, frame_in_flight_index)?;
+
+            let attachments = [color_image_view, depth_stencil_image_view];
             let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
-                .render_pass(self.render_pass)
+                .render_pass(render_pass)
                 .attachments(&attachments)
                 .width(swap_chain.extent().width)
                 .height(swap_chain.extent().height)

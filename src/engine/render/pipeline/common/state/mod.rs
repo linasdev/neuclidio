@@ -4,4 +4,3 @@ pub mod descriptor;
 pub mod pipeline;
 pub mod synchronization;
 pub mod transfer;
-pub mod window;

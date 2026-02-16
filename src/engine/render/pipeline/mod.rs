@@ -52,6 +52,11 @@ pub trait RenderPipelineExt {
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
     ) -> NeuclidioResult<()>;
+    fn clean_up_for_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    );
     fn destroy(self, vulkan_context: &VulkanContext);
 }
 
@@ -134,6 +139,18 @@ impl RenderPipelineExt for RenderPipeline {
         match self {
             RenderPipeline::Standard(pipeline) => {
                 pipeline.reset_window(vulkan_context, neuclidio_window)
+            }
+        }
+    }
+
+    fn clean_up_for_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) {
+        match self {
+            RenderPipeline::Standard(pipeline) => {
+                pipeline.clean_up_for_window(vulkan_context, neuclidio_window)
             }
         }
     }

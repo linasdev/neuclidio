@@ -149,7 +149,7 @@ impl RenderEngine {
             unsafe { vulkan_context.logical_device.device_wait_idle()? };
 
             if let Some(render_pipeline) = self.render_pipeline.as_mut() {
-                render_pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window);
+                render_pipeline.clean_up_for_window(vulkan_context, neuclidio_window);
             }
 
             if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
@@ -242,11 +242,7 @@ impl RenderEngine {
 
         debug!("Creating Vulkan Memory Allocator");
 
-        let allocator_options = AllocatorOptions::new(
-            &instance,
-            &logical_device,
-            physical_device,
-        );
+        let allocator_options = AllocatorOptions::new(&instance, &logical_device, physical_device);
         let allocator = unsafe { Allocator::new(&allocator_options)? };
 
         let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
@@ -271,7 +267,7 @@ impl RenderEngine {
 
         let render_pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
             &vulkan_context,
-            3, // TODO: Make this configurable
+            2, // TODO: Make this configurable
         )?));
 
         self.vulkan_context.replace(vulkan_context);
