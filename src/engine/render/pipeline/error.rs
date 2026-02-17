@@ -5,6 +5,7 @@ pub enum RenderPipelineError {
     ByteCodeError(BytecodeError),
     RenderableNotAllocated,
     Unprepared,
+    MaxFramesInFlightTooLittle,
 }
 
 impl From<BytecodeError> for RenderPipelineError {

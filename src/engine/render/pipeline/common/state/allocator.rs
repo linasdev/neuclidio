@@ -75,6 +75,7 @@ impl RenderPipelineAllocatorState {
             window_state.reset_window(
                 vulkan_context,
                 neuclidio_window,
+                self.color_image_format,
                 self.depth_stencil_image_format,
                 self.max_frames_in_flight,
             )?;
@@ -90,6 +91,7 @@ impl RenderPipelineAllocatorState {
         window_state.reset_window(
             vulkan_context,
             neuclidio_window,
+            self.color_image_format,
             self.depth_stencil_image_format,
             self.max_frames_in_flight,
         )?;
@@ -269,6 +271,22 @@ impl RenderPipelineAllocatorState {
         self.render_buffers
             .get(&render_buffer_id)
             .map(|render_buffer| render_buffer.buffer)
+    }
+
+    pub fn color_image_format(&self) -> vk::Format {
+        self.color_image_format
+    }
+
+    pub fn color_image_view(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+        frame_in_flight_index: usize,
+    ) -> NeuclidioResult<vk::ImageView> {
+        self.window_states
+            .get(&neuclidio_window.id)
+            .and_then(|window_state| window_state.color_image_views.as_ref())
+            .map(|color_image_views| color_image_views[frame_in_flight_index])
+            .ok_or(RenderPipelineError::Unprepared.into())
     }
 
     pub fn depth_stencil_image_format(&self) -> vk::Format {
@@ -584,6 +602,8 @@ impl RenderPipelineAllocatorState {
 struct RenderPipelineAllocatorWindowState {
     window_id: WindowId,
     uniform_buffers: Vec<(vk::Buffer, Allocation)>,
+    color_images: Option<Vec<(vk::Image, Allocation)>>,
+    color_image_views: Option<Vec<vk::ImageView>>,
     depth_stencil_images: Option<Vec<(vk::Image, Allocation)>>,
     depth_stencil_image_views: Option<Vec<vk::ImageView>>,
 }
@@ -608,6 +628,8 @@ impl RenderPipelineAllocatorWindowState {
         Ok(Self {
             window_id,
             uniform_buffers,
+            color_images: None,
+            color_image_views: None,
             depth_stencil_images: None,
             depth_stencil_image_views: None,
         })
@@ -615,7 +637,7 @@ impl RenderPipelineAllocatorWindowState {
 
     fn prepare_for_window_reset(&mut self, vulkan_context: &VulkanContext) {
         debug!(
-            "Destroying Vulkan depth image views for window with id: {:?}",
+            "Destroying Vulkan depth / stencil image views for window with id: {:?}",
             self.window_id
         );
 
@@ -630,7 +652,7 @@ impl RenderPipelineAllocatorWindowState {
         }
 
         debug!(
-            "Destroying Vulkan depth images for window with id: {:?}",
+            "Destroying Vulkan depth / stencil images for window with id: {:?}",
             self.window_id
         );
 
@@ -643,21 +665,78 @@ impl RenderPipelineAllocatorWindowState {
                 }
             }
         }
+
+        debug!(
+            "Destroying Vulkan color image views for window with id: {:?}",
+            self.window_id
+        );
+
+        if let Some(color_image_views) = self.color_image_views.take() {
+            for color_image_view in color_image_views.into_iter() {
+                unsafe {
+                    vulkan_context
+                        .logical_device
+                        .destroy_image_view(color_image_view, None);
+                }
+            }
+        }
+
+        debug!(
+            "Destroying Vulkan color images for window with id: {:?}",
+            self.window_id
+        );
+
+        if let Some(color_images) = self.color_images.take() {
+            for color_image in color_images.into_iter() {
+                unsafe {
+                    vulkan_context
+                        .allocator
+                        .destroy_image(color_image.0, color_image.1);
+                }
+            }
+        }
     }
 
     fn reset_window(
         &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
+        color_image_format: vk::Format,
         depth_stencil_image_format: vk::Format,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<()> {
         debug!(
-            "Creating Vulkan depth images for window with id: {:?}",
+            "Creating Vulkan color images for window with id: {:?}",
             self.window_id
         );
 
-        let depth_stencil_images = Self::create_depth_stencil_images(
+        let color_images = Self::create_images(
+            neuclidio_window,
+            &vulkan_context.allocator,
+            color_image_format,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            max_frames_in_flight,
+        )?;
+
+        debug!(
+            "Creating Vulkan color image views for window with id: {:?}",
+            self.window_id
+        );
+
+        let color_image_views = Self::create_image_views(
+            vulkan_context,
+            color_image_format,
+            vk::ImageAspectFlags::COLOR,
+            &color_images,
+        )?;
+
+        debug!(
+            "Creating Vulkan depth / stencil images for window with id: {:?}",
+            self.window_id
+        );
+
+        let depth_stencil_images = Self::create_images(
             neuclidio_window,
             &vulkan_context.allocator,
             depth_stencil_image_format,
@@ -667,16 +746,19 @@ impl RenderPipelineAllocatorWindowState {
         )?;
 
         debug!(
-            "Creating Vulkan depth image views for window with id: {:?}",
+            "Creating Vulkan depth / stencil image views for window with id: {:?}",
             self.window_id
         );
 
-        let depth_stencil_image_views = Self::create_depth_stencil_image_views(
+        let depth_stencil_image_views = Self::create_image_views(
             vulkan_context,
             depth_stencil_image_format,
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
             &depth_stencil_images,
         )?;
 
+        self.color_images = Some(color_images);
+        self.color_image_views = Some(color_image_views);
         self.depth_stencil_images = Some(depth_stencil_images);
         self.depth_stencil_image_views = Some(depth_stencil_image_views);
 
@@ -700,7 +782,7 @@ impl RenderPipelineAllocatorWindowState {
         }
     }
 
-    fn create_depth_stencil_images(
+    fn create_images(
         neuclidio_window: &NeuclidioWindow,
         allocator: &Allocator,
         image_format: vk::Format,
@@ -719,7 +801,7 @@ impl RenderPipelineAllocatorWindowState {
             .depth(1)
             .build();
 
-        let mut depth_stencil_images = Vec::with_capacity(max_frames_in_flight);
+        let mut images = Vec::with_capacity(max_frames_in_flight);
 
         for _ in 0..max_frames_in_flight {
             let image_create_info = vk::ImageCreateInfo::builder()
@@ -739,46 +821,46 @@ impl RenderPipelineAllocatorWindowState {
             let mut allocation_options = AllocationOptions::default();
             allocation_options.usage = MemoryUsage::AutoPreferDevice;
 
-            let depth_stencil_image =
-                unsafe { allocator.create_image(image_create_info, &allocation_options)? };
+            let image = unsafe { allocator.create_image(image_create_info, &allocation_options)? };
 
-            depth_stencil_images.push(depth_stencil_image);
+            images.push(image);
         }
 
-        Ok(depth_stencil_images)
+        Ok(images)
     }
 
-    fn create_depth_stencil_image_views(
+    fn create_image_views(
         vulkan_context: &VulkanContext,
         image_format: vk::Format,
-        depth_stencil_images: &[(vk::Image, Allocation)],
+        image_aspect: vk::ImageAspectFlags,
+        images: &[(vk::Image, Allocation)],
     ) -> NeuclidioResult<Vec<vk::ImageView>> {
-        let mut depth_stencil_image_views = Vec::with_capacity(depth_stencil_images.len());
+        let mut image_views = Vec::with_capacity(images.len());
 
-        for (depth_stencil_image, _) in depth_stencil_images.iter() {
+        for (image, _) in images.iter() {
             let subresource_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+                .aspect_mask(image_aspect)
                 .base_mip_level(0)
                 .level_count(1)
                 .base_array_layer(0)
                 .layer_count(1);
 
             let image_view_create_info = vk::ImageViewCreateInfo::builder()
-                .image(*depth_stencil_image)
+                .image(*image)
                 .view_type(vk::ImageViewType::_2D)
                 .format(image_format)
                 .subresource_range(subresource_range);
 
-            let depth_stencil_image_view = unsafe {
+            let image_view = unsafe {
                 vulkan_context
                     .logical_device
                     .create_image_view(&image_view_create_info, None)?
             };
 
-            depth_stencil_image_views.push(depth_stencil_image_view);
+            image_views.push(image_view);
         }
 
-        Ok(depth_stencil_image_views)
+        Ok(image_views)
     }
 
     fn create_uniform_buffers(

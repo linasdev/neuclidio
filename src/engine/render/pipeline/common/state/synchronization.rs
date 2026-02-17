@@ -25,20 +25,32 @@ impl RenderPipelineSynchronizationState {
         Ok(synchronization)
     }
 
+    pub fn prepare_for_window_reset(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) {
+        if let Some(window_state) = self.window_states.get_mut(&neuclidio_window.id) {
+            window_state.prepare_for_window_reset(vulkan_context);
+        }
+    }
+
     pub fn reset_window(
         &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
     ) -> NeuclidioResult<()> {
-        if self.window_states.contains_key(&neuclidio_window.id) {
+        if let Some(window_state) = self.window_states.get_mut(&neuclidio_window.id) {
+            window_state.reset_window(vulkan_context, neuclidio_window)?;
             return Ok(());
         }
 
-        let window_state = RenderPipelineSynchronizationWindowState::new(
+        let mut window_state = RenderPipelineSynchronizationWindowState::new(
             vulkan_context,
             neuclidio_window,
             self.max_frames_in_flight,
         )?;
+        window_state.reset_window(vulkan_context, neuclidio_window)?;
 
         self.window_states.insert(neuclidio_window.id, window_state);
 
@@ -76,11 +88,18 @@ impl RenderPipelineSynchronizationState {
     pub fn current_render_finished_semaphore(
         &self,
         neuclidio_window: &NeuclidioWindow,
+        image_index: usize,
     ) -> NeuclidioResult<vk::Semaphore> {
         self.window_states
             .get(&neuclidio_window.id)
-            .map(|window_state| {
-                window_state.render_finished_semaphores[window_state.frame_in_flight_index]
+            .and_then(|window_state| {
+                if let Some(render_finished_semaphores) =
+                    window_state.render_finished_semaphores.as_ref()
+                {
+                    Some(render_finished_semaphores[image_index])
+                } else {
+                    None
+                }
             })
             .ok_or(RenderPipelineError::Unprepared.into())
     }
@@ -137,6 +156,16 @@ impl RenderPipelineSynchronizationState {
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
+    pub fn frame_in_flight_index(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<usize> {
+        self.window_states
+            .get(&neuclidio_window.id)
+            .map(|window_state| window_state.frame_in_flight_index)
+            .ok_or(RenderPipelineError::Unprepared.into())
+    }
+
     pub fn frame_index_semaphore_required_value(
         &self,
         neuclidio_window: &NeuclidioWindow,
@@ -145,8 +174,24 @@ impl RenderPipelineSynchronizationState {
         if frame_index < self.max_frames_in_flight as u64 {
             Ok(0)
         } else {
-            Ok(frame_index - self.max_frames_in_flight as u64)
+            Ok((frame_index - self.max_frames_in_flight as u64 + 1) * 2)
         }
+    }
+
+    pub fn frame_index_semaphore_first_value(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<u64> {
+        let frame_index = self.frame_index(neuclidio_window)?;
+        Ok(frame_index * 2 + 1)
+    }
+
+    pub fn frame_index_semaphore_second_value(
+        &self,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<u64> {
+        let frame_index = self.frame_index(neuclidio_window)? + 1;
+        Ok(frame_index * 2)
     }
 
     pub fn wait_for_frame_index_semaphore_value(
@@ -193,9 +238,9 @@ impl RenderPipelineSynchronizationState {
 
 pub struct RenderPipelineSynchronizationWindowState {
     window_id: WindowId,
-    image_available_semaphores: Vec<vk::Semaphore>,
-    render_finished_semaphores: Vec<vk::Semaphore>,
     frame_index_semaphore: vk::Semaphore,
+    image_available_semaphores: Vec<vk::Semaphore>,
+    render_finished_semaphores: Option<Vec<vk::Semaphore>>,
     frame_index: u64,
     frame_in_flight_index: usize,
 }
@@ -207,22 +252,24 @@ impl RenderPipelineSynchronizationWindowState {
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
         let window_id = neuclidio_window.id;
-        debug!("Creating Vulkan synchronization objects for window with id: {window_id:?}");
+
+        debug!("Creating Vulkan timeline semaphore for window with id: {window_id:?}");
 
         let frame_index_semaphore = Self::create_timeline_semaphore(vulkan_context)?;
+
+        debug!("Creating Vulkan image available semaphores for window with id: {window_id:?}");
+
         let mut image_available_semaphores = Vec::with_capacity(max_frames_in_flight);
-        let mut render_finished_semaphores = Vec::with_capacity(max_frames_in_flight);
 
         for _ in 0..max_frames_in_flight {
             image_available_semaphores.push(Self::create_semaphore(vulkan_context)?);
-            render_finished_semaphores.push(Self::create_semaphore(vulkan_context)?);
         }
 
         let synchronization = Self {
             window_id,
-            image_available_semaphores,
-            render_finished_semaphores,
             frame_index_semaphore,
+            image_available_semaphores,
+            render_finished_semaphores: None,
             frame_index: 0,
             frame_in_flight_index: 0,
         };
@@ -230,11 +277,55 @@ impl RenderPipelineSynchronizationWindowState {
         Ok(synchronization)
     }
 
-    pub fn destroy(self, vulkan_context: &VulkanContext) {
+    pub fn prepare_for_window_reset(&mut self, vulkan_context: &VulkanContext) {
         let logical_device = &vulkan_context.logical_device;
 
+        if let Some(render_finished_semaphores) = self.render_finished_semaphores.take() {
+            debug!(
+                "Destroying Vulkan render finished semaphores for window with id: {:?}",
+                self.window_id
+            );
+
+            for semaphore in render_finished_semaphores.iter() {
+                unsafe {
+                    logical_device.destroy_semaphore(*semaphore, None);
+                }
+            }
+        }
+    }
+
+    pub fn reset_window(
+        &mut self,
+        vulkan_context: &VulkanContext,
+        neuclidio_window: &NeuclidioWindow,
+    ) -> NeuclidioResult<()> {
+        let swap_chain = neuclidio_window
+            .swap_chain
+            .as_ref()
+            .ok_or(RenderPipelineError::Unprepared)?;
+
         debug!(
-            "Destroying Vulkan semaphores for window with id: {:?}",
+            "Creating Vulkan render finished semaphores for window with id: {:?}",
+            self.window_id
+        );
+
+        let mut render_finished_semaphores = Vec::with_capacity(swap_chain.image_count());
+
+        for _ in 0..swap_chain.image_count() {
+            render_finished_semaphores.push(Self::create_semaphore(vulkan_context)?);
+        }
+
+        self.render_finished_semaphores = Some(render_finished_semaphores);
+
+        Ok(())
+    }
+
+    pub fn destroy(mut self, vulkan_context: &VulkanContext) {
+        let logical_device = &vulkan_context.logical_device;
+        self.prepare_for_window_reset(vulkan_context);
+
+        debug!(
+            "Destroying Vulkan timeline semaphore for window with id: {:?}",
             self.window_id
         );
 
@@ -242,11 +333,10 @@ impl RenderPipelineSynchronizationWindowState {
             logical_device.destroy_semaphore(self.frame_index_semaphore, None);
         }
 
-        for semaphore in self.render_finished_semaphores.iter() {
-            unsafe {
-                logical_device.destroy_semaphore(*semaphore, None);
-            }
-        }
+        debug!(
+            "Destroying Vulkan image available semaphores for window with id: {:?}",
+            self.window_id
+        );
 
         for semaphore in self.image_available_semaphores.iter() {
             unsafe {

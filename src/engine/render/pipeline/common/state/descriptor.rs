@@ -226,7 +226,7 @@ impl RenderPipelineDescriptorWindowState {
     fn create_descriptor_sets(
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
-        allocate_state: &RenderPipelineAllocatorState,
+        allocator_state: &RenderPipelineAllocatorState,
         descriptor_set_layout: vk::DescriptorSetLayout,
         descriptor_pool: vk::DescriptorPool,
         uniform_buffer_size: vk::DeviceSize,
@@ -245,7 +245,7 @@ impl RenderPipelineDescriptorWindowState {
         for frame_in_flight_index in 0..max_frames_in_flight {
             let descriptor_buffer_info = vk::DescriptorBufferInfo::builder()
                 .buffer(
-                    allocate_state
+                    allocator_state
                         .uniform_buffer(neuclidio_window, frame_in_flight_index)?
                         .0,
                 )

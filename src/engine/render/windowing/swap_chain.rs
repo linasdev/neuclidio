@@ -2,6 +2,7 @@ use crate::engine::render::error::RenderError;
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::NeuclidioResult;
+use itertools::Itertools;
 use log::debug;
 use vulkanalia::vk::{
     DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtensionInstanceCommands,
@@ -14,6 +15,7 @@ pub struct SwapChain {
     window_id: WindowId,
     chain: vk::SwapchainKHR,
     extent: vk::Extent2D,
+    image_format: vk::Format,
     images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
 }
@@ -34,8 +36,9 @@ impl SwapChain {
         )?;
         let surface_capabilities = swap_chain_support.capabilities;
         let image_count = Self::get_image_count(surface_capabilities, preferred_image_count);
-        let image_format = vulkan_context.surface_format.format;
-        let image_color_space = vulkan_context.surface_format.color_space;
+        let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
+        let image_format = surface_format.format;
+        let image_color_space = surface_format.color_space;
         let extent = Self::get_extent(window, surface_capabilities);
 
         let present_mode =
@@ -70,6 +73,7 @@ impl SwapChain {
             window_id: window.id(),
             chain,
             extent,
+            image_format,
             images,
             image_views,
         };
@@ -115,6 +119,10 @@ impl SwapChain {
         self.extent
     }
 
+    pub fn image_format(&self) -> vk::Format {
+        self.image_format
+    }
+
     pub fn image_views(&self) -> &[vk::ImageView] {
         &self.image_views
     }
@@ -131,6 +139,19 @@ impl SwapChain {
         } else {
             preferred_image_count.max(surface_capabilities.min_image_count)
         }
+    }
+
+    fn get_surface_format(
+        available_surface_formats: &[vk::SurfaceFormatKHR],
+    ) -> NeuclidioResult<vk::SurfaceFormatKHR> {
+        available_surface_formats
+            .iter()
+            .cloned()
+            .find_or_first(|surface_format| {
+                surface_format.format == vk::Format::B8G8R8A8_SRGB
+                    && surface_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            })
+            .ok_or(RenderError::MissingSurfaceFormat.into())
     }
 
     fn get_extent(

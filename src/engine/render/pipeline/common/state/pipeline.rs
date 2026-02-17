@@ -50,9 +50,10 @@ impl RenderPipelineState {
 
         debug!("Creating Vulkan pipeline layout");
 
+        let descriptor_set_layouts = [descriptor_state.descriptor_set_layout()];
         let pipeline_layout = Self::create_pipeline_layout(
             vulkan_context,
-            &[descriptor_state.descriptor_set_layout()],
+            &descriptor_set_layouts,
             push_constant_ranges,
         )?;
 
@@ -264,6 +265,7 @@ impl RenderPipelineState {
     fn create_input_assembly_state() -> vk::PipelineInputAssemblyStateCreateInfo {
         vk::PipelineInputAssemblyStateCreateInfo::builder()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+            .primitive_restart_enable(false)
             .build()
     }
 
@@ -365,7 +367,7 @@ impl RenderPipelineState {
         vulkan_context: &VulkanContext,
         allocator_state: &RenderPipelineAllocatorState,
     ) -> NeuclidioResult<vk::RenderPass> {
-        let color_image_format = vk::Format::B8G8R8A8_SRGB; // TODO: Render to a custom offscreen image, then copy that image to the swap_chain
+        let color_image_format = allocator_state.color_image_format();
         let depth_stencil_image_format = allocator_state.depth_stencil_image_format();
 
         let color_attachment = vk::AttachmentDescription::builder()
@@ -376,7 +378,7 @@ impl RenderPipelineState {
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .build();
 
         let depth_stencil_attachment = vk::AttachmentDescription::builder()
@@ -406,7 +408,7 @@ impl RenderPipelineState {
             .depth_stencil_attachment(&depth_stencil_attachment_reference)
             .build();
 
-        let dependency = vk::SubpassDependency::builder()
+        let depth_stencil_dependency = vk::SubpassDependency::builder()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
             .src_stage_mask(
@@ -424,9 +426,18 @@ impl RenderPipelineState {
             )
             .build();
 
+        let offscreen_image_dependency = vk::SubpassDependency::builder()
+            .src_subpass(0)
+            .dst_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .build();
+
         let attachments = [color_attachment, depth_stencil_attachment];
         let subpasses = [subpass];
-        let dependencies = [dependency];
+        let dependencies = [depth_stencil_dependency, offscreen_image_dependency];
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
             .attachments(&attachments)
             .subpasses(&subpasses)
@@ -520,10 +531,8 @@ impl RenderPipelineWindowState {
         let mut frame_buffers = Vec::with_capacity(max_frames_in_flight);
 
         for frame_in_flight_index in 0..max_frames_in_flight {
-            // TODO: Swap this over to the offscreen image views
-            let color_image_view = *swap_chain.image_views().get(frame_in_flight_index).unwrap();
-            // let color_image_view =
-            //     allocator_state.color_image_view(neuclidio_window, frame_in_flight_index)?;
+            let color_image_view =
+                allocator_state.color_image_view(neuclidio_window, frame_in_flight_index)?;
             let depth_stencil_image_view = allocator_state
                 .depth_stencil_image_view(neuclidio_window, frame_in_flight_index)?;
 

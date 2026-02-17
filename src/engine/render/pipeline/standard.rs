@@ -4,6 +4,7 @@ use crate::engine::render::pipeline::common::push_constant::model::ModelPushCons
 use crate::engine::render::pipeline::common::state::allocator::RenderPipelineAllocatorState;
 use crate::engine::render::pipeline::common::state::command::RenderPipelineCommandState;
 use crate::engine::render::pipeline::common::state::descriptor::RenderPipelineDescriptorState;
+use crate::engine::render::pipeline::common::state::display::DisplayPipelineState;
 use crate::engine::render::pipeline::common::state::pipeline::RenderPipelineState;
 use crate::engine::render::pipeline::common::state::synchronization::RenderPipelineSynchronizationState;
 use crate::engine::render::pipeline::common::state::transfer::RenderPipelineTransferState;
@@ -15,7 +16,7 @@ use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::entity::transform::{Transform, TransformExt};
-use crate::error::NeuclidioResult;
+use crate::error::{NeuclidioError, NeuclidioResult};
 use crate::id::EntityId;
 use glam::Mat4;
 use log::warn;
@@ -24,13 +25,22 @@ use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSwapchainExtensionDeviceCommands};
 use winit::window::WindowId;
 
-const VERTEX_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
+const RENDER_VERTEX_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/shaders/standard/vertex_shader.spv"
+    "/shaders/standard/render_vertex_shader.spv"
 ));
-const FRAGMENT_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
+const RENDER_FRAGMENT_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/shaders/standard/fragment_shader.spv"
+    "/shaders/standard/render_fragment_shader.spv"
+));
+
+const DISPLAY_VERTEX_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/shaders/standard/display_vertex_shader.spv"
+));
+const DISPLAY_FRAGMENT_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/shaders/standard/display_fragment_shader.spv"
 ));
 
 type RenderableEntities = HashMap<Renderable, HashMap<WindowId, HashMap<EntityId, Entity>>>;
@@ -42,6 +52,7 @@ pub struct StandardRenderPipeline {
     transfer_state: RenderPipelineTransferState,
     synchronization_state: RenderPipelineSynchronizationState,
     command_state: RenderPipelineCommandState,
+    display_state: DisplayPipelineState,
     renderable_entities: RenderableEntities,
 }
 
@@ -52,6 +63,10 @@ impl StandardRenderPipeline {
         vulkan_context: &VulkanContext,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
+        if max_frames_in_flight < 2 {
+            return Err(RenderPipelineError::MaxFramesInFlightTooLittle.into());
+        }
+
         let color_image_format = get_supported_image_format(
             vulkan_context,
             vk::ImageTiling::OPTIMAL,
@@ -86,13 +101,14 @@ impl StandardRenderPipeline {
             &descriptor_state,
             &allocator_state,
             &[ModelPushConstant::push_constant_range()],
-            VERTEX_SHADER_BYTECODE,
-            FRAGMENT_SHADER_BYTECODE,
+            RENDER_VERTEX_SHADER_BYTECODE,
+            RENDER_FRAGMENT_SHADER_BYTECODE,
             max_frames_in_flight,
         )?;
         let transfer_state = RenderPipelineTransferState::new(vulkan_context)?;
         let synchronization_state = RenderPipelineSynchronizationState::new(max_frames_in_flight)?;
         let command_state = RenderPipelineCommandState::new(max_frames_in_flight)?;
+        let display_state = DisplayPipelineState::new(vulkan_context, max_frames_in_flight)?;
         let renderable_entities = HashMap::new();
 
         Ok(Self {
@@ -102,6 +118,7 @@ impl StandardRenderPipeline {
             transfer_state,
             synchronization_state,
             command_state,
+            display_state,
             renderable_entities,
         })
     }
@@ -460,15 +477,26 @@ impl RenderPipelineExt for StandardRenderPipeline {
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
     ) -> NeuclidioResult<()> {
-        // TODO: Move this out of the main loop and do often but not every frame.
-        self.allocator_state
-            .deallocate_renderables(vulkan_context, &self.synchronization_state)?;
-
         let logical_device = &vulkan_context.logical_device;
         let swap_chain = neuclidio_window
             .swap_chain
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
+
+        // TODO: Move this out of the main loop and do often but not every frame.
+        self.allocator_state
+            .deallocate_renderables(vulkan_context, &self.synchronization_state)?;
+
+        // Wait for GPU
+
+        self.synchronization_state
+            .wait_for_frame_index_semaphore_value(vulkan_context, neuclidio_window)?;
+
+        // Acquire indices
+
+        let frame_in_flight_index = self
+            .synchronization_state
+            .frame_in_flight_index(neuclidio_window)?;
 
         let current_image_available_semaphore = self
             .synchronization_state
@@ -491,13 +519,12 @@ impl RenderPipelineExt for StandardRenderPipeline {
             Err(err) => return Err(err.into()),
         };
 
-        self.synchronization_state
-            .wait_for_frame_index_semaphore_value(vulkan_context, neuclidio_window)?;
+        // Render pass
 
         self.command_state.record_command_buffer(
             vulkan_context,
             neuclidio_window,
-            image_index,
+            frame_in_flight_index,
             |command_buffer| {
                 Self::record_command_buffer(
                     vulkan_context,
@@ -508,14 +535,14 @@ impl RenderPipelineExt for StandardRenderPipeline {
                     &self.synchronization_state,
                     &self.renderable_entities,
                     command_buffer,
-                    image_index,
+                    frame_in_flight_index,
                 )
             },
         )?;
         self.allocator_state.fill_uniform_buffer(
             vulkan_context,
             neuclidio_window,
-            image_index,
+            frame_in_flight_index,
             |uniform_buffer_memory| {
                 Self::fill_uniform_buffer(&neuclidio_window, uniform_buffer_memory)
             },
@@ -524,22 +551,16 @@ impl RenderPipelineExt for StandardRenderPipeline {
         let frame_index_semaphore_required_value = self
             .synchronization_state
             .frame_index_semaphore_required_value(neuclidio_window)?;
-        let next_frame_index = self.synchronization_state.frame_index(neuclidio_window)? + 1;
+        let frame_index_semaphore_first_value = self
+            .synchronization_state
+            .frame_index_semaphore_first_value(neuclidio_window)?;
 
-        let wait_semaphore_values = [0, frame_index_semaphore_required_value];
-        let signal_semaphore_values = [0, next_frame_index];
+        let wait_semaphore_values = [frame_index_semaphore_required_value];
+        let signal_semaphore_values = [frame_index_semaphore_first_value];
         let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
             .wait_semaphore_values(&wait_semaphore_values)
             .signal_semaphore_values(&signal_semaphore_values)
             .build();
-
-        let current_image_available_semaphore = self
-            .synchronization_state
-            .current_image_available_semaphore(neuclidio_window)?;
-
-        let current_render_finished_semaphore = self
-            .synchronization_state
-            .current_render_finished_semaphore(neuclidio_window)?;
 
         let frame_index_semaphore = self
             .synchronization_state
@@ -547,12 +568,60 @@ impl RenderPipelineExt for StandardRenderPipeline {
 
         let command_buffer = self
             .command_state
-            .command_buffer(neuclidio_window, image_index)?;
+            .command_buffer(neuclidio_window, frame_in_flight_index)?;
+
+        let wait_semaphores = [frame_index_semaphore];
+        let wait_dst_stage_mask = [vk::PipelineStageFlags::TOP_OF_PIPE];
+        let command_buffers = [command_buffer];
+        let signal_semaphores = [frame_index_semaphore];
+        let submit_info = vk::SubmitInfo::builder()
+            .push_next(&mut timeline_semaphore_submit_info)
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_dst_stage_mask)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)
+            .build();
+
+        unsafe {
+            logical_device.queue_submit(
+                vulkan_context.graphics_queue,
+                &[submit_info],
+                vk::Fence::null(),
+            )?;
+        }
+
+        // Display pass
+
+        self.display_state.record_command_buffer(
+            vulkan_context,
+            neuclidio_window,
+            frame_in_flight_index,
+            image_index,
+        )?;
+
+        let frame_index_semaphore_second_value = self
+            .synchronization_state
+            .frame_index_semaphore_second_value(neuclidio_window)?;
+
+        let wait_semaphore_values = [0, frame_index_semaphore_first_value];
+        let signal_semaphore_values = [0, frame_index_semaphore_second_value];
+        let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
+            .wait_semaphore_values(&wait_semaphore_values)
+            .signal_semaphore_values(&signal_semaphore_values)
+            .build();
+
+        let current_render_finished_semaphore = self
+            .synchronization_state
+            .current_render_finished_semaphore(neuclidio_window, image_index)?;
+
+        let command_buffer = self
+            .display_state
+            .command_buffer(neuclidio_window, frame_in_flight_index)?;
 
         let wait_semaphores = [current_image_available_semaphore, frame_index_semaphore];
         let wait_dst_stage_mask = [
             vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
         ];
         let command_buffers = [command_buffer];
         let signal_semaphores = [current_render_finished_semaphore, frame_index_semaphore];
@@ -572,6 +641,8 @@ impl RenderPipelineExt for StandardRenderPipeline {
             )?;
         }
 
+        // Presentation
+
         let wait_semaphores = [current_render_finished_semaphore];
         let swap_chains = [swap_chain.chain()];
         let image_indices = [image_index as u32];
@@ -581,9 +652,17 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .image_indices(&image_indices)
             .build();
 
-        unsafe {
-            logical_device.queue_present_khr(vulkan_context.present_queue, &present_info)?;
-        }
+        let present_result = unsafe {
+            logical_device.queue_present_khr(vulkan_context.present_queue, &present_info)
+        };
+
+        match present_result {
+            Ok(_) => {}
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                return Err(RenderError::OutOfDateSwapChain.into());
+            }
+            Err(err) => return Err(err.into()),
+        };
 
         self.synchronization_state
             .increment_frame(neuclidio_window)?;
@@ -596,6 +675,10 @@ impl RenderPipelineExt for StandardRenderPipeline {
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
     ) {
+        self.display_state
+            .prepare_for_window_reset(vulkan_context, neuclidio_window);
+        self.synchronization_state
+            .prepare_for_window_reset(vulkan_context, neuclidio_window);
         self.pipeline_state
             .prepare_for_window_reset(vulkan_context, neuclidio_window);
         self.descriptor_state
@@ -629,6 +712,13 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .reset_window(vulkan_context, neuclidio_window)?;
         self.command_state
             .reset_window(vulkan_context, neuclidio_window)?;
+        self.display_state.reset_window(
+            vulkan_context,
+            neuclidio_window,
+            &self.allocator_state,
+            DISPLAY_VERTEX_SHADER_BYTECODE,
+            DISPLAY_FRAGMENT_SHADER_BYTECODE,
+        )?;
 
         Ok(())
     }
@@ -648,9 +738,12 @@ impl RenderPipelineExt for StandardRenderPipeline {
             .clean_up_for_window(vulkan_context, neuclidio_window);
         self.command_state
             .clean_up_for_window(vulkan_context, neuclidio_window);
+        self.display_state
+            .clean_up_for_window(vulkan_context, neuclidio_window);
     }
 
     fn destroy(self, vulkan_context: &VulkanContext) {
+        self.display_state.destroy(vulkan_context);
         self.command_state.destroy(vulkan_context);
         self.synchronization_state.destroy(vulkan_context);
         self.transfer_state.destroy(vulkan_context);

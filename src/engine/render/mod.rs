@@ -245,7 +245,6 @@ impl RenderEngine {
         let allocator_options = AllocatorOptions::new(&instance, &logical_device, physical_device);
         let allocator = unsafe { Allocator::new(&allocator_options)? };
 
-        let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
         let graphics_queue = Self::get_device_queue(&logical_device, queue_family_indices.graphics);
         let present_queue = Self::get_device_queue(&logical_device, queue_family_indices.present);
         let transfer_queue = Self::get_device_queue(&logical_device, queue_family_indices.transfer);
@@ -260,7 +259,6 @@ impl RenderEngine {
             graphics_queue,
             present_queue,
             transfer_queue,
-            surface_format,
             #[cfg(debug_assertions)]
             debug_messenger: debug_messenger.unwrap(),
         };
@@ -450,19 +448,6 @@ impl RenderEngine {
     fn create_surface(instance: &Instance, window: &Window) -> NeuclidioResult<vk::SurfaceKHR> {
         let surface = unsafe { vk_window::create_surface(instance, window, window)? };
         Ok(surface)
-    }
-
-    fn get_surface_format(
-        available_surface_formats: &[vk::SurfaceFormatKHR],
-    ) -> NeuclidioResult<vk::SurfaceFormatKHR> {
-        available_surface_formats
-            .iter()
-            .cloned()
-            .find_or_first(|surface_format| {
-                surface_format.format == vk::Format::B8G8R8A8_SRGB
-                    && surface_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-            })
-            .ok_or(RenderError::MissingSurfaceFormat.into())
     }
 
     fn pick_physical_device(

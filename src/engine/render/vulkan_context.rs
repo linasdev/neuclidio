@@ -14,7 +14,6 @@ pub struct VulkanContext {
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
-    pub surface_format: vk::SurfaceFormatKHR,
 
     #[cfg(debug_assertions)]
     pub debug_messenger: vk::DebugUtilsMessengerEXT,

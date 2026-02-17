@@ -17,6 +17,7 @@ pub enum RenderError {
     MissingTimelineSemaphoreSupport,
     MissingDeviceExtensions,
     MissingSurfaceFormat,
+    MissingColorImageFormat,
     MissingDepthStencilImageFormat,
     MissingPresentMode,
     MissingValidationLayer,
