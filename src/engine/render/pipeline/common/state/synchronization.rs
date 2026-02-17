@@ -115,7 +115,7 @@ impl RenderPipelineSynchronizationState {
     }
 
     // TODO:REMOVE
-    pub fn frame_index_semaphore_value_by_window_id(
+    pub fn finished_frame_index_by_window_id(
         &self,
         vulkan_context: &VulkanContext,
         window_id: WindowId,
@@ -131,10 +131,10 @@ impl RenderPipelineSynchronizationState {
                 .get_semaphore_counter_value(frame_index_semaphore)?
         };
 
-        Ok(frame_index_semaphore_value)
+        Ok(frame_index_semaphore_value / 2)
     }
 
-    pub fn frame_index_semaphore_value(
+    pub fn finished_frame_index(
         &self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,

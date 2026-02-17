@@ -196,7 +196,7 @@ impl RenderPipelineAllocatorState {
                 Ok((
                     *window_id,
                     synchronization_state
-                        .frame_index_semaphore_value_by_window_id(vulkan_context, *window_id)?,
+                        .finished_frame_index_by_window_id(vulkan_context, *window_id)?,
                 ))
             })
             .collect::<NeuclidioResult<HashMap<_, _>>>()?;
