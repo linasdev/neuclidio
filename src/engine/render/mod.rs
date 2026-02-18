@@ -79,22 +79,23 @@ impl RenderEngine {
             loop {
                 // Process events
                 let mut should_exit = false;
+                let mut events = vec![];
 
                 loop {
                     match self.internal_event_bus_reader.try_recv() {
-                        Ok(event) => {
-                            if let Err(err) = self.handle_internal_event(event) {
-                                warn!(
-                                    "Failed to handle internal event in Neuclidio render engine with error: {err:?}"
-                                );
-                            }
-                        }
+                        Ok(event) => events.push(event),
                         Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
                             should_exit = true;
                             break;
                         }
                     }
+                }
+
+                if let Err(err) = self.handle_internal_events(events) {
+                    warn!(
+                        "Failed to handle internal event in Neuclidio render engine with error: {err:?}"
+                    );
                 }
 
                 if should_exit {
@@ -110,32 +111,40 @@ impl RenderEngine {
         })
     }
 
-    fn handle_internal_event(
+    fn handle_internal_events(
         &mut self,
-        internal_event: EngineInternalEvent,
+        internal_events: Vec<EngineInternalEvent>,
     ) -> NeuclidioResult<()> {
-        match internal_event {
-            EngineInternalEvent::WindowCreated(window) => {
-                self.handle_window_created(window)?;
+        let mut resized_windows = HashMap::new();
+
+        for internal_event in internal_events.into_iter() {
+            match internal_event {
+                EngineInternalEvent::WindowCreated(window) => {
+                    self.handle_window_created(window)?;
+                }
+                EngineInternalEvent::WindowResized(window, new_window_size) => {
+                    resized_windows.insert(window.id(), (window, new_window_size));
+                }
+                EngineInternalEvent::WindowClosed(window) => {
+                    self.handle_window_closed(window)?;
+                }
+                EngineInternalEvent::EntityAdded(window_id, entity) => {
+                    self.handle_entity_added(window_id, entity)?;
+                }
+                EngineInternalEvent::EntityRemoved(window_ids, entity) => {
+                    self.handle_entity_removed(window_ids, entity)?;
+                }
+                EngineInternalEvent::RenderableAdded(renderable, entity) => {
+                    self.handle_renderable_added(entity, renderable)?;
+                }
+                EngineInternalEvent::RenderableRemoved(renderable, entity) => {
+                    self.handle_renderable_removed(entity, renderable)?;
+                }
             }
-            EngineInternalEvent::WindowResized(window, new_window_size) => {
-                self.handle_window_resized(window, new_window_size)?;
-            }
-            EngineInternalEvent::WindowClosed(window) => {
-                self.handle_window_closed(window)?;
-            }
-            EngineInternalEvent::EntityAdded(window_id, entity) => {
-                self.handle_entity_added(window_id, entity)?;
-            }
-            EngineInternalEvent::EntityRemoved(window_ids, entity) => {
-                self.handle_entity_removed(window_ids, entity)?;
-            }
-            EngineInternalEvent::RenderableAdded(renderable, entity) => {
-                self.handle_renderable_added(entity, renderable)?;
-            }
-            EngineInternalEvent::RenderableRemoved(renderable, entity) => {
-                self.handle_renderable_removed(entity, renderable)?;
-            }
+        }
+
+        for (resized_window, new_window_size) in resized_windows.into_values() {
+            self.handle_window_resized(resized_window, new_window_size)?;
         }
 
         Ok(())
@@ -187,14 +196,17 @@ impl RenderEngine {
                 render_pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window);
             }
 
-            if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
-                swap_chain.destroy(vulkan_context);
-            }
+            let old_swap_chain = if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
+                Some(swap_chain.destroy_without_chain(vulkan_context))
+            } else {
+                None
+            };
 
             let swap_chain = SwapChain::new(
                 vulkan_context,
                 neuclidio_window,
                 window_id,
+                old_swap_chain,
                 2,                                                        // TODO: Make configurable
                 &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
             )?;

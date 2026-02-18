@@ -5,7 +5,7 @@ use crate::error::NeuclidioResult;
 use itertools::Itertools;
 use log::debug;
 use vulkanalia::vk::{
-    DeviceV1_0, Handle, HasBuilder, KhrSurfaceExtensionInstanceCommands,
+    DeviceV1_0, HasBuilder, KhrSurfaceExtensionInstanceCommands,
     KhrSwapchainExtensionDeviceCommands,
 };
 use vulkanalia::{Instance, vk};
@@ -25,6 +25,7 @@ impl SwapChain {
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
         window_id: WindowId,
+        old_swap_chain: Option<vk::SwapchainKHR>,
         preferred_image_count: u32,
         preferred_present_modes: &[vk::PresentModeKHR],
     ) -> NeuclidioResult<Self> {
@@ -44,7 +45,7 @@ impl SwapChain {
         let present_mode =
             Self::get_present_mode(&swap_chain_support.present_modes, preferred_present_modes)?;
 
-        let swap_chain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        let mut swap_chain_create_info_builder = vk::SwapchainCreateInfoKHR::builder()
             .surface(neuclidio_window.surface)
             .min_image_count(image_count)
             .image_format(image_format)
@@ -57,12 +58,16 @@ impl SwapChain {
             .pre_transform(surface_capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
-            .clipped(true)
-            .old_swapchain(vk::SwapchainKHR::null())
-            .build();
+            .clipped(true);
+
+        if let Some(old_swap_chain) = old_swap_chain {
+            swap_chain_create_info_builder =
+                swap_chain_create_info_builder.old_swapchain(old_swap_chain);
+        }
 
         let (chain, images) = unsafe {
-            let chain = logical_device.create_swapchain_khr(&swap_chain_create_info, None)?;
+            let chain = logical_device
+                .create_swapchain_khr(&swap_chain_create_info_builder.build(), None)?;
             let images = logical_device.get_swapchain_images_khr(chain)?;
 
             (chain, images)
@@ -81,29 +86,33 @@ impl SwapChain {
         Ok(swap_chain)
     }
 
-    pub fn destroy(self, vulkan_context: &VulkanContext) {
+    pub fn destroy_without_chain(self, vulkan_context: &VulkanContext) -> vk::SwapchainKHR {
         debug!(
             "Destroying Vulkan swap chain image views for window with id: {:?}",
             self.window_id,
         );
 
-        for swap_chain_image_view in self.image_views.iter() {
+        for image_view in self.image_views.into_iter() {
             unsafe {
                 vulkan_context
                     .logical_device
-                    .destroy_image_view(*swap_chain_image_view, None);
+                    .destroy_image_view(image_view, None);
             }
         }
 
-        debug!(
-            "Destroying Vulkan swap chain for window with id: {:?}",
-            self.window_id,
-        );
+        self.chain
+    }
+
+    pub fn destroy(self, vulkan_context: &VulkanContext) {
+        let window_id = self.window_id;
+        let chain = self.destroy_without_chain(vulkan_context);
+
+        debug!("Destroying Vulkan swap chain for window with id: {window_id:?}");
 
         unsafe {
             vulkan_context
                 .logical_device
-                .destroy_swapchain_khr(self.chain, None);
+                .destroy_swapchain_khr(chain, None);
         }
     }
 
