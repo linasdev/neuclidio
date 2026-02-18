@@ -788,6 +788,7 @@ name = "neuclidio"
 version = "0.1.0"
 dependencies = [
  "bus",
+ "crossbeam-channel",
  "env_logger",
  "glam",
  "itertools",

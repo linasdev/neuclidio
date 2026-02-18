@@ -1,35 +1,41 @@
+use crate::engine::event::{EngineAppEvent, EngineInternalEvent};
+use crate::engine::main_thread::EngineMainThread;
 use crate::engine::proxy::EngineProxy;
 use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::RenderEngine;
 use crate::engine::render::windowing::error::WindowingError;
-use crate::engine::render::windowing::event::{AddWindowResult, CloseWindowResult};
 use crate::engine::thread::EngineThread;
-use crate::entity::Entity;
 use crate::error::NeuclidioResult;
-use crate::event::Event;
-use crate::id::EntityId;
 use bus::Bus;
+use event::EngineEvent;
 use itertools::Itertools;
-use log::{error, info, warn};
+use log::{error, info};
 use render::windowing::event::WindowingEvent;
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::Arc;
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+mod main_thread;
+
 pub mod builder;
+pub mod event;
 pub mod proxy;
 pub mod render;
 pub mod thread;
 
 pub struct Engine {
     render_engine: RenderEngine,
-    event_bus: Bus<Event>,
+    event_bus: Bus<EngineEvent>,
+    internal_event_bus: Bus<EngineInternalEvent>,
     event_loop: EventLoop<WindowingEvent>,
-    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
-    proxy_request_receiver: mpsc::Receiver<EngineProxyRequest>,
+    proxy_request_sender: crossbeam_channel::Sender<EngineProxyRequest>,
+    proxy_request_receiver: crossbeam_channel::Receiver<EngineProxyRequest>,
+    app_event_sender: crossbeam_channel::Sender<EngineAppEvent>,
+    app_event_receiver: crossbeam_channel::Receiver<EngineAppEvent>,
 }
 
 impl Engine {
@@ -58,211 +64,103 @@ impl Engine {
         info!("Running Neuclidio engine");
 
         let event_loop_proxy = self.event_loop.create_proxy();
+        let main_thread = EngineMainThread {
+            event_bus: self.event_bus,
+            internal_event_bus: self.internal_event_bus,
+            event_loop_proxy,
+            proxy_request_sender: self.proxy_request_sender,
+            proxy_request_receiver: self.proxy_request_receiver,
+            app_event_receiver: self.app_event_receiver,
+            entities: HashMap::new(),
+        };
+
+        let main_thread_handle = main_thread.spawn();
+        let render_thread_handle = self.render_engine.spawn();
 
         self.event_loop
             .run_app(&mut EngineApp {
-                render_engine: self.render_engine,
-                event_bus: self.event_bus,
-                event_loop_proxy,
-                proxy_request_sender: self.proxy_request_sender,
-                proxy_request_receiver: self.proxy_request_receiver,
                 windows: HashMap::new(),
-                entities: HashMap::new(),
+                app_event_sender: self.app_event_sender,
             })
             .map_err(WindowingError::from)?;
+
+        render_thread_handle.join().unwrap();
+        main_thread_handle.join().unwrap();
 
         Ok(())
     }
 }
 
 struct EngineApp {
-    render_engine: RenderEngine,
-    event_bus: Bus<Event>,
-    event_loop_proxy: EventLoopProxy<WindowingEvent>,
-    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
-    proxy_request_receiver: mpsc::Receiver<EngineProxyRequest>,
-    windows: HashMap<WindowId, Window>,
-    entities: HashMap<EntityId, Entity>,
+    windows: HashMap<WindowId, Arc<Window>>,
+    app_event_sender: crossbeam_channel::Sender<EngineAppEvent>,
 }
 
 impl EngineApp {
-    fn handle_proxy_request(&mut self, proxy_request: EngineProxyRequest) {
-        match proxy_request {
-            EngineProxyRequest::AddProxy(proxy_sender) => {
-                info!("Creating Neuclidio engine proxy");
-
-                let proxy = EngineProxy::new(
-                    self.event_bus.add_rx(),
-                    self.event_loop_proxy.clone(),
-                    self.proxy_request_sender.clone(),
-                );
-
-                if proxy_sender.send(proxy).is_err() {
-                    log::error!("Failed to send engine proxy across proxy request channel");
-                }
-            }
-            EngineProxyRequest::AddEntity(window_id, entity) => {
-                let entity_id = entity.id();
-                if entity.has_window_id(window_id) {
-                    warn!(
-                        "Entity with id '{entity_id}' is already added to window with id: {window_id:?}"
-                    );
-                    return;
-                }
-
-                entity.add_window_id(window_id);
-
-                if let Err(err) = self.render_engine.submit_entity(window_id, &entity) {
-                    warn!(
-                        "Failed to add entity with id '{entity_id}' to window with id '{window_id:?}' with error: {err:?}"
-                    );
-                }
-
-                if self.entities.get(&entity_id).is_none() {
-                    self.entities.insert(entity_id, entity);
-                }
-            }
-            EngineProxyRequest::RemoveEntity(entity) => {
-                let entity_id = entity.id();
-                if let Some(entity) = self.entities.remove(&entity_id) {
-                    if let Err(err) = self.render_engine.remove_entity(&entity) {
-                        warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
-                    }
-
-                    entity.clear_window_ids();
-                }
-            }
-            EngineProxyRequest::RemoveEntityById(entity_id) => {
-                if let Some(entity) = self.entities.remove(&entity_id) {
-                    if let Err(err) = self.render_engine.remove_entity(&entity) {
-                        warn!("Failed to remove entity with id '{entity_id}' with error: {err:?}");
-                    }
-
-                    entity.clear_window_ids();
-                }
-            }
-            EngineProxyRequest::HandleRenderableAdded(entity_id, renderable) => {
-                if let Some(entity) = self.entities.get(&entity_id) {
-                    if let Err(err) = self
-                        .render_engine
-                        .handle_renderable_added(entity, renderable)
-                    {
-                        warn!(
-                            "Failed to handle renderable added for entity with id '{entity_id}' with error: {err:?}"
-                        );
-                    }
-                }
-            }
-            EngineProxyRequest::HandleRenderableRemoved(entity_id, renderable) => {
-                if let Some(entity) = self.entities.get(&entity_id) {
-                    if let Err(err) = self
-                        .render_engine
-                        .handle_renderable_removed(entity, renderable)
-                    {
-                        warn!(
-                            "Failed to handle renderable removed for entity with id '{entity_id}' with error: {err:?}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     fn handle_exit_event(&mut self, event_loop: &ActiveEventLoop) {
         let window_ids = self.windows.keys().copied().collect_vec();
 
         for window_id in window_ids.into_iter() {
-            let _ = self.close_window(window_id);
+            if let Err(err) = self.handle_window_closure(window_id) {
+                error!("Failed to handle window closure: {:?}", err);
+            }
         }
 
         event_loop.exit();
     }
 
-    fn handle_add_window_event(
+    fn handle_window_creation(
         &mut self,
         event_loop: &ActiveEventLoop,
         mut window_attributes: WindowAttributes,
-        result_sender: mpsc::Sender<AddWindowResult>,
-    ) {
+    ) -> NeuclidioResult<WindowId> {
         if window_attributes.title.as_str() == "winit window" {
             window_attributes = window_attributes.with_title("Neuclidio Example");
         }
 
-        match event_loop.create_window(window_attributes) {
-            Ok(window) => {
-                let window_id = window.id();
-                info!("Added window with id: {:?}", window_id);
+        let window = event_loop
+            .create_window(window_attributes)
+            .map_err(|err| WindowingError::OsError(err))?;
 
-                match self.render_engine.prepare_for_window(&window) {
-                    Ok(_) => {
-                        info!("Prepared Vulkan for window with id: {:?}", window_id);
-                    }
-                    Err(err) => {
-                        error!("Failed to prepare Vulkan for window: {:?}", err);
+        let window_id = window.id();
+        let window = Arc::new(window);
 
-                        if let Err(_) = result_sender.send(Err(err)) {
-                            error!("Failed to send result across windowing event channel");
-                        }
-                        return;
-                    }
-                }
+        self.windows.insert(window_id, window.clone());
+        self.send_engine_app_event(EngineAppEvent::WindowCreated(window));
 
-                self.windows.insert(window_id, window);
-
-                let value = Ok(window_id);
-                if result_sender.send(value).is_err() {
-                    log::error!("Failed to send result across windowing event channel");
-                }
-            }
-            Err(err) => {
-                error!("Failed to add window: {}", err);
-
-                let value = Err(WindowingError::OsError(err).into());
-                if let Err(_) = result_sender.send(value) {
-                    error!("Failed to send result across windowing event channel");
-                }
-            }
-        }
+        Ok(window_id)
     }
 
-    fn handle_close_window_event(
+    fn handle_window_closure(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
+        let window = self
+            .windows
+            .remove(&window_id)
+            .ok_or(WindowingError::WindowNotFound)?;
+
+        self.send_engine_app_event(EngineAppEvent::WindowClosed(window));
+
+        Ok(())
+    }
+
+    fn handle_window_resize(
         &mut self,
         window_id: WindowId,
-        result_sender: mpsc::Sender<CloseWindowResult>,
-    ) {
-        match self.close_window(window_id) {
-            Ok(_) => {
-                if let Err(_) = result_sender.send(Ok(())) {
-                    log::error!("Failed to send result across windowing event channel");
-                }
-            }
-            Err(err) => {
-                if let Err(_) = result_sender.send(Err(err)) {
-                    error!("Failed to send result across windowing event channel");
-                }
-            }
-        }
+        new_window_size: PhysicalSize<u32>,
+    ) -> NeuclidioResult<()> {
+        let window = self
+            .windows
+            .get(&window_id)
+            .ok_or(WindowingError::WindowNotFound)?;
+        self.send_engine_app_event(EngineAppEvent::WindowResized(
+            window.clone(),
+            new_window_size,
+        ));
+        Ok(())
     }
 
-    fn close_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
-        match self.windows.remove(&window_id) {
-            Some(window) => {
-                if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
-                    warn!(
-                        "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
-                    );
-                }
-
-                drop(window);
-                info!("Closed window with id: {:?}", window_id);
-
-                Ok(())
-            }
-            None => {
-                let err = WindowingError::WindowNotFound;
-                error!("Failed to close window: {:?}", err);
-                Err(err.into())
-            }
+    fn send_engine_app_event(&self, value: EngineAppEvent) {
+        if self.app_event_sender.send(value).is_err() {
+            error!("Failed to send event across engine app event channel");
         }
     }
 }
@@ -273,11 +171,37 @@ impl ApplicationHandler<WindowingEvent> for EngineApp {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WindowingEvent) {
         match event {
             WindowingEvent::ExitEventLoop => self.handle_exit_event(event_loop),
-            WindowingEvent::AddWindow(window_attributes, result_sender) => {
-                self.handle_add_window_event(event_loop, window_attributes, result_sender);
+            WindowingEvent::CreateWindow(window_attributes, result_sender) => {
+                match self.handle_window_creation(event_loop, window_attributes) {
+                    Ok(window_id) => {
+                        info!("Created window with id: {window_id:?}");
+                        if result_sender.send(Ok(window_id)).is_err() {
+                            error!("Failed to send result across windowing event channel");
+                        }
+                    }
+                    Err(err) => {
+                        error!("Failed to handle window closure: {:?}", err);
+                        if result_sender.send(Err(err)).is_err() {
+                            error!("Failed to send result across windowing event channel");
+                        }
+                    }
+                }
             }
             WindowingEvent::CloseWindow(window_id, result_sender) => {
-                self.handle_close_window_event(window_id, result_sender);
+                match self.handle_window_closure(window_id) {
+                    Ok(_) => {
+                        info!("Closing window (due to application request) with id: {window_id:?}");
+                        if result_sender.send(Ok(())).is_err() {
+                            error!("Failed to send result across windowing event channel");
+                        }
+                    }
+                    Err(err) => {
+                        error!("Failed to handle window closure: {:?}", err);
+                        if result_sender.send(Err(err)).is_err() {
+                            error!("Failed to send result across windowing event channel");
+                        }
+                    }
+                }
             }
         }
     }
@@ -288,57 +212,17 @@ impl ApplicationHandler<WindowingEvent> for EngineApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        loop {
-            match self.proxy_request_receiver.try_recv() {
-                Ok(request) => self.handle_proxy_request(request),
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    panic!("Neuclidio engine proxy request channel closed");
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-            }
-        }
-
         match event {
-            WindowEvent::CloseRequested => {
-                if let Err(err) = self.render_engine.clean_up_for_window(window_id) {
-                    warn!(
-                        "Failed to clean up for window with id '{window_id:?}' with error: {err:?}"
-                    );
-                    return;
+            WindowEvent::CloseRequested => match self.handle_window_closure(window_id) {
+                Ok(_) => info!("Closing window (due to user request) with id: {window_id:?}"),
+                Err(err) => error!("Failed to handle window closure: {:?}", err),
+            },
+            WindowEvent::Resized(new_window_size) => {
+                if let Err(err) = self.handle_window_resize(window_id, new_window_size) {
+                    error!("Failed to handle window closure: {:?}", err);
                 }
-                self.windows.remove(&window_id);
-                info!("Closed window (due to user request) with id: {window_id:?}");
-
-                self.event_bus.broadcast(Event::WindowClosed(window_id));
             }
-            WindowEvent::Resized(_) => match self.windows.get(&window_id) {
-                Some(window) => {
-                    if let Err(err) = self.render_engine.handle_window_change(window) {
-                        warn!(
-                            "Failed to handle window change for window with id '{window_id:?}' with error: {err:?}"
-                        );
-                        return;
-                    }
-                }
-                None => {
-                    warn!("Can't find window by id '{window_id:?}' when processing window event")
-                }
-            },
-            WindowEvent::RedrawRequested => match self.windows.get(&window_id) {
-                Some(window) => {
-                    if let Err(err) = self.render_engine.render_on_window(window) {
-                        warn!(
-                            "Failed to render on window with id '{window_id:?}' with error: {err:?}"
-                        );
-                        return;
-                    }
-
-                    window.request_redraw();
-                }
-                None => {
-                    warn!("Can't find window by id '{window_id:?}' when processing window event")
-                }
-            },
+            WindowEvent::RedrawRequested => {} // We are handling rendering independently of the window manager
             _ => {}
         }
     }

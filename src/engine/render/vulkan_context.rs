@@ -1,11 +1,13 @@
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
 use log::debug;
-use vulkanalia::vk::{DeviceV1_0, ExtDebugUtilsExtensionInstanceCommands, InstanceV1_0};
-use vulkanalia::{Device, Entry, Instance, vk};
+use vulkanalia::vk::{DeviceV1_0, InstanceV1_0};
+use vulkanalia::{Device, Instance, vk};
 use vulkanalia_vma::Allocator;
 
+#[cfg(debug_assertions)]
+use vulkanalia::vk::ExtDebugUtilsExtensionInstanceCommands;
+
 pub struct VulkanContext {
-    pub vulkan_entry: Entry,
     pub instance: Instance,
     pub logical_device: Device,
     pub allocator: Allocator,

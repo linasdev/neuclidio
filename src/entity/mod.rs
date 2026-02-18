@@ -45,8 +45,8 @@ impl Entity {
         self.window_ids.lock().unwrap().insert(window_id)
     }
 
-    pub(crate) fn clear_window_ids(&self) {
-        self.window_ids.lock().unwrap().clear();
+    pub(crate) fn drain_window_ids(&self) -> Vec<WindowId> {
+        self.window_ids.lock().unwrap().drain().collect()
     }
 
     pub(crate) fn do_with_each_window_id<F>(&self, mut f: F)

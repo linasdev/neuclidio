@@ -4,11 +4,13 @@ use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::error::NeuclidioResult;
+use std::collections::HashMap;
 use vulkanalia::vk;
 use vulkanalia::vk::{HasBuilder, InstanceV1_0};
 use vulkanalia_vma::{
     Alloc, Allocation, AllocationCreateFlags, AllocationOptions, Allocator, MemoryUsage,
 };
+use winit::window::WindowId;
 
 pub mod error;
 
@@ -20,27 +22,27 @@ pub trait RenderPipelineExt {
         &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
-        entity: &Entity,
+        entity: Entity,
     ) -> NeuclidioResult<()>;
-    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()>;
+    fn remove_entity(&mut self, window_ids: Vec<WindowId>, entity: Entity) -> NeuclidioResult<()>;
 
     fn handle_renderable_added(
         &mut self,
         vulkan_context: &VulkanContext,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()>;
     fn handle_renderable_removed(
         &mut self,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()>;
 
     fn render(
         &mut self,
         vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()>;
+        neuclidio_windows: &HashMap<WindowId, NeuclidioWindow>,
+    ) -> NeuclidioResult<Vec<WindowId>>;
 
     fn prepare_for_window_reset(
         &mut self,
@@ -69,7 +71,7 @@ impl RenderPipelineExt for RenderPipeline {
         &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
-        entity: &Entity,
+        entity: Entity,
     ) -> NeuclidioResult<()> {
         match self {
             RenderPipeline::Standard(pipeline) => {
@@ -78,16 +80,16 @@ impl RenderPipelineExt for RenderPipeline {
         }
     }
 
-    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+    fn remove_entity(&mut self, window_ids: Vec<WindowId>, entity: Entity) -> NeuclidioResult<()> {
         match self {
-            RenderPipeline::Standard(pipeline) => pipeline.remove_entity(entity),
+            RenderPipeline::Standard(pipeline) => pipeline.remove_entity(window_ids, entity),
         }
     }
 
     fn handle_renderable_added(
         &mut self,
         vulkan_context: &VulkanContext,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         match self {
@@ -99,7 +101,7 @@ impl RenderPipelineExt for RenderPipeline {
 
     fn handle_renderable_removed(
         &mut self,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         match self {
@@ -112,10 +114,12 @@ impl RenderPipelineExt for RenderPipeline {
     fn render(
         &mut self,
         vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()> {
+        neuclidio_windows: &HashMap<WindowId, NeuclidioWindow>,
+    ) -> NeuclidioResult<Vec<WindowId>> {
         match self {
-            RenderPipeline::Standard(pipeline) => pipeline.render(vulkan_context, neuclidio_window),
+            RenderPipeline::Standard(pipeline) => {
+                pipeline.render(vulkan_context, neuclidio_windows)
+            }
         }
     }
 

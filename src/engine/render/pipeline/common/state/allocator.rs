@@ -189,14 +189,13 @@ impl RenderPipelineAllocatorState {
         vulkan_context: &VulkanContext,
         synchronization_state: &RenderPipelineSynchronizationState,
     ) -> NeuclidioResult<()> {
-        let frame_index_semaphore_values = self
+        let finished_frame_index_values = self
             .window_states
             .keys()
             .map(|window_id| {
                 Ok((
                     *window_id,
-                    synchronization_state
-                        .finished_frame_index_by_window_id(vulkan_context, *window_id)?,
+                    synchronization_state.finished_frame_index(vulkan_context, *window_id)?,
                 ))
             })
             .collect::<NeuclidioResult<HashMap<_, _>>>()?;
@@ -209,9 +208,8 @@ impl RenderPipelineAllocatorState {
                 let mut still_used = false;
                 let last_used_in_frame = last_used_in_frame.lock().unwrap();
                 for (window_id, last_used_in_frame) in last_used_in_frame.iter() {
-                    if let Some(frame_index_semaphore_value) =
-                        frame_index_semaphore_values.get(window_id)
-                        && last_used_in_frame > frame_index_semaphore_value
+                    if let Some(finished_frame_index) = finished_frame_index_values.get(window_id)
+                        && last_used_in_frame > finished_frame_index
                     {
                         still_used = true;
                         break;

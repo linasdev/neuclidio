@@ -16,7 +16,7 @@ use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::entity::transform::{Transform, TransformExt};
-use crate::error::{NeuclidioError, NeuclidioResult};
+use crate::error::NeuclidioResult;
 use crate::id::EntityId;
 use glam::Mat4;
 use log::warn;
@@ -334,7 +334,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
         &mut self,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
-        entity: &Entity,
+        entity: Entity,
     ) -> NeuclidioResult<()> {
         let mut new_renderables = vec![];
         let renderables = entity.get_renderables();
@@ -371,12 +371,12 @@ impl RenderPipelineExt for StandardRenderPipeline {
         Ok(())
     }
 
-    fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+    fn remove_entity(&mut self, window_ids: Vec<WindowId>, entity: Entity) -> NeuclidioResult<()> {
         let mut removed_renderables = vec![];
         let renderables = entity.get_renderables();
         for renderable in renderables.into_iter() {
             if let Some(entities_by_window) = self.renderable_entities.get_mut(&renderable) {
-                entity.do_with_each_window_id(|window_id| {
+                for window_id in window_ids.iter() {
                     if let Some(entities) = entities_by_window.get_mut(&window_id) {
                         entities.remove(&entity.id());
                     }
@@ -386,7 +386,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
                     {
                         entities_by_window.remove(&window_id);
                     }
-                });
+                }
             }
 
             if let Some(entities_by_window) = self.renderable_entities.get(&renderable)
@@ -408,7 +408,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
     fn handle_renderable_added(
         &mut self,
         vulkan_context: &VulkanContext,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         if let Some(entities_by_window) = self.renderable_entities.get_mut(&renderable) {
@@ -445,7 +445,7 @@ impl RenderPipelineExt for StandardRenderPipeline {
 
     fn handle_renderable_removed(
         &mut self,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         if let Some(entities_by_window) = self.renderable_entities.get_mut(&renderable) {
@@ -475,199 +475,205 @@ impl RenderPipelineExt for StandardRenderPipeline {
     fn render(
         &mut self,
         vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()> {
-        let logical_device = &vulkan_context.logical_device;
-        let swap_chain = neuclidio_window
-            .swap_chain
-            .as_ref()
-            .ok_or(RenderPipelineError::Unprepared)?;
-
+        neuclidio_windows: &HashMap<WindowId, NeuclidioWindow>,
+    ) -> NeuclidioResult<Vec<WindowId>> {
         // TODO: Move this out of the main loop and do often but not every frame.
         self.allocator_state
             .deallocate_renderables(vulkan_context, &self.synchronization_state)?;
 
-        // Wait for GPU
+        let mut changed_window_ids = vec![];
 
-        self.synchronization_state
-            .wait_for_frame_index_semaphore_value(vulkan_context, neuclidio_window)?;
+        for neuclidio_window in neuclidio_windows.values() {
+            let logical_device = &vulkan_context.logical_device;
+            let swap_chain = neuclidio_window
+                .swap_chain
+                .as_ref()
+                .ok_or(RenderPipelineError::Unprepared)?;
 
-        // Acquire indices
+            // Wait for GPU
 
-        let frame_in_flight_index = self
-            .synchronization_state
-            .frame_in_flight_index(neuclidio_window)?;
+            self.synchronization_state
+                .wait_for_frame_index_semaphore_value(vulkan_context, neuclidio_window)?;
 
-        let current_image_available_semaphore = self
-            .synchronization_state
-            .current_image_available_semaphore(neuclidio_window)?;
+            // Acquire indices
 
-        let image_index_result = unsafe {
-            logical_device.acquire_next_image_khr(
-                swap_chain.chain(),
-                u64::MAX,
-                current_image_available_semaphore,
-                vk::Fence::null(),
-            )
-        };
+            let frame_in_flight_index = self
+                .synchronization_state
+                .frame_in_flight_index(neuclidio_window)?;
 
-        let image_index = match image_index_result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
-                return Err(RenderError::OutOfDateSwapChain.into());
-            }
-            Err(err) => return Err(err.into()),
-        };
+            let current_image_available_semaphore = self
+                .synchronization_state
+                .current_image_available_semaphore(neuclidio_window)?;
 
-        // Render pass
-
-        self.command_state.record_command_buffer(
-            vulkan_context,
-            neuclidio_window,
-            frame_in_flight_index,
-            |command_buffer| {
-                Self::record_command_buffer(
-                    vulkan_context,
-                    neuclidio_window,
-                    &self.pipeline_state,
-                    &self.descriptor_state,
-                    &self.allocator_state,
-                    &self.synchronization_state,
-                    &self.renderable_entities,
-                    command_buffer,
-                    frame_in_flight_index,
+            let image_index_result = unsafe {
+                logical_device.acquire_next_image_khr(
+                    swap_chain.chain(),
+                    u64::MAX,
+                    current_image_available_semaphore,
+                    vk::Fence::null(),
                 )
-            },
-        )?;
-        self.allocator_state.fill_uniform_buffer(
-            vulkan_context,
-            neuclidio_window,
-            frame_in_flight_index,
-            |uniform_buffer_memory| {
-                Self::fill_uniform_buffer(&neuclidio_window, uniform_buffer_memory)
-            },
-        )?;
+            };
 
-        let frame_index_semaphore_required_value = self
-            .synchronization_state
-            .frame_index_semaphore_required_value(neuclidio_window)?;
-        let frame_index_semaphore_first_value = self
-            .synchronization_state
-            .frame_index_semaphore_first_value(neuclidio_window)?;
+            let image_index = match image_index_result {
+                Ok((image_index, _)) => image_index as usize,
+                Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                    changed_window_ids.push(neuclidio_window.id);
+                    continue;
+                }
+                Err(err) => return Err(err.into()),
+            };
 
-        let wait_semaphore_values = [frame_index_semaphore_required_value];
-        let signal_semaphore_values = [frame_index_semaphore_first_value];
-        let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
-            .wait_semaphore_values(&wait_semaphore_values)
-            .signal_semaphore_values(&signal_semaphore_values)
-            .build();
+            // Render pass
 
-        let frame_index_semaphore = self
-            .synchronization_state
-            .frame_index_semaphore(neuclidio_window)?;
-
-        let command_buffer = self
-            .command_state
-            .command_buffer(neuclidio_window, frame_in_flight_index)?;
-
-        let wait_semaphores = [frame_index_semaphore];
-        let wait_dst_stage_mask = [vk::PipelineStageFlags::TOP_OF_PIPE];
-        let command_buffers = [command_buffer];
-        let signal_semaphores = [frame_index_semaphore];
-        let submit_info = vk::SubmitInfo::builder()
-            .push_next(&mut timeline_semaphore_submit_info)
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_dst_stage_mask)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)
-            .build();
-
-        unsafe {
-            logical_device.queue_submit(
-                vulkan_context.graphics_queue,
-                &[submit_info],
-                vk::Fence::null(),
+            self.command_state.record_command_buffer(
+                vulkan_context,
+                neuclidio_window,
+                frame_in_flight_index,
+                |command_buffer| {
+                    Self::record_command_buffer(
+                        vulkan_context,
+                        neuclidio_window,
+                        &self.pipeline_state,
+                        &self.descriptor_state,
+                        &self.allocator_state,
+                        &self.synchronization_state,
+                        &self.renderable_entities,
+                        command_buffer,
+                        frame_in_flight_index,
+                    )
+                },
             )?;
-        }
-
-        // Display pass
-
-        self.display_state.record_command_buffer(
-            vulkan_context,
-            neuclidio_window,
-            frame_in_flight_index,
-            image_index,
-        )?;
-
-        let frame_index_semaphore_second_value = self
-            .synchronization_state
-            .frame_index_semaphore_second_value(neuclidio_window)?;
-
-        let wait_semaphore_values = [0, frame_index_semaphore_first_value];
-        let signal_semaphore_values = [0, frame_index_semaphore_second_value];
-        let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
-            .wait_semaphore_values(&wait_semaphore_values)
-            .signal_semaphore_values(&signal_semaphore_values)
-            .build();
-
-        let current_render_finished_semaphore = self
-            .synchronization_state
-            .current_render_finished_semaphore(neuclidio_window, image_index)?;
-
-        let command_buffer = self
-            .display_state
-            .command_buffer(neuclidio_window, frame_in_flight_index)?;
-
-        let wait_semaphores = [current_image_available_semaphore, frame_index_semaphore];
-        let wait_dst_stage_mask = [
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-        ];
-        let command_buffers = [command_buffer];
-        let signal_semaphores = [current_render_finished_semaphore, frame_index_semaphore];
-        let submit_info = vk::SubmitInfo::builder()
-            .push_next(&mut timeline_semaphore_submit_info)
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_dst_stage_mask)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)
-            .build();
-
-        unsafe {
-            logical_device.queue_submit(
-                vulkan_context.graphics_queue,
-                &[submit_info],
-                vk::Fence::null(),
+            self.allocator_state.fill_uniform_buffer(
+                vulkan_context,
+                neuclidio_window,
+                frame_in_flight_index,
+                |uniform_buffer_memory| {
+                    Self::fill_uniform_buffer(&neuclidio_window, uniform_buffer_memory)
+                },
             )?;
-        }
 
-        // Presentation
+            let frame_index_semaphore_required_value = self
+                .synchronization_state
+                .frame_index_semaphore_required_value(neuclidio_window)?;
+            let frame_index_semaphore_first_value = self
+                .synchronization_state
+                .frame_index_semaphore_first_value(neuclidio_window)?;
 
-        let wait_semaphores = [current_render_finished_semaphore];
-        let swap_chains = [swap_chain.chain()];
-        let image_indices = [image_index as u32];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semaphores)
-            .swapchains(&swap_chains)
-            .image_indices(&image_indices)
-            .build();
+            let wait_semaphore_values = [frame_index_semaphore_required_value];
+            let signal_semaphore_values = [frame_index_semaphore_first_value];
+            let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
+                .wait_semaphore_values(&wait_semaphore_values)
+                .signal_semaphore_values(&signal_semaphore_values)
+                .build();
 
-        let present_result = unsafe {
-            logical_device.queue_present_khr(vulkan_context.present_queue, &present_info)
-        };
+            let frame_index_semaphore = self
+                .synchronization_state
+                .frame_index_semaphore(neuclidio_window)?;
 
-        match present_result {
-            Ok(_) => {}
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
-                return Err(RenderError::OutOfDateSwapChain.into());
+            let command_buffer = self
+                .command_state
+                .command_buffer(neuclidio_window, frame_in_flight_index)?;
+
+            let wait_semaphores = [frame_index_semaphore];
+            let wait_dst_stage_mask = [vk::PipelineStageFlags::TOP_OF_PIPE];
+            let command_buffers = [command_buffer];
+            let signal_semaphores = [frame_index_semaphore];
+            let submit_info = vk::SubmitInfo::builder()
+                .push_next(&mut timeline_semaphore_submit_info)
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_dst_stage_mask)
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores)
+                .build();
+
+            unsafe {
+                logical_device.queue_submit(
+                    vulkan_context.graphics_queue,
+                    &[submit_info],
+                    vk::Fence::null(),
+                )?;
             }
-            Err(err) => return Err(err.into()),
-        };
 
-        self.synchronization_state
-            .increment_frame(neuclidio_window)?;
+            // Display pass
 
-        Ok(())
+            self.display_state.record_command_buffer(
+                vulkan_context,
+                neuclidio_window,
+                frame_in_flight_index,
+                image_index,
+            )?;
+
+            let frame_index_semaphore_second_value = self
+                .synchronization_state
+                .frame_index_semaphore_second_value(neuclidio_window)?;
+
+            let wait_semaphore_values = [0, frame_index_semaphore_first_value];
+            let signal_semaphore_values = [0, frame_index_semaphore_second_value];
+            let mut timeline_semaphore_submit_info = vk::TimelineSemaphoreSubmitInfo::builder()
+                .wait_semaphore_values(&wait_semaphore_values)
+                .signal_semaphore_values(&signal_semaphore_values)
+                .build();
+
+            let current_render_finished_semaphore = self
+                .synchronization_state
+                .current_render_finished_semaphore(neuclidio_window, image_index)?;
+
+            let command_buffer = self
+                .display_state
+                .command_buffer(neuclidio_window, frame_in_flight_index)?;
+
+            let wait_semaphores = [current_image_available_semaphore, frame_index_semaphore];
+            let wait_dst_stage_mask = [
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+            ];
+            let command_buffers = [command_buffer];
+            let signal_semaphores = [current_render_finished_semaphore, frame_index_semaphore];
+            let submit_info = vk::SubmitInfo::builder()
+                .push_next(&mut timeline_semaphore_submit_info)
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_dst_stage_mask)
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores)
+                .build();
+
+            unsafe {
+                logical_device.queue_submit(
+                    vulkan_context.graphics_queue,
+                    &[submit_info],
+                    vk::Fence::null(),
+                )?;
+            }
+
+            // Presentation
+
+            let wait_semaphores = [current_render_finished_semaphore];
+            let swap_chains = [swap_chain.chain()];
+            let image_indices = [image_index as u32];
+            let present_info = vk::PresentInfoKHR::builder()
+                .wait_semaphores(&wait_semaphores)
+                .swapchains(&swap_chains)
+                .image_indices(&image_indices)
+                .build();
+
+            let present_result = unsafe {
+                logical_device.queue_present_khr(vulkan_context.present_queue, &present_info)
+            };
+
+            match present_result {
+                Ok(_) => {}
+                Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                    changed_window_ids.push(neuclidio_window.id);
+                    continue;
+                }
+                Err(err) => return Err(err.into()),
+            };
+
+            self.synchronization_state
+                .increment_frame(neuclidio_window)?;
+        }
+
+        Ok(changed_window_ids)
     }
 
     fn prepare_for_window_reset(

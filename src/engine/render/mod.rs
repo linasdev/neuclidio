@@ -1,3 +1,4 @@
+use crate::engine::event::EngineInternalEvent;
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
@@ -9,11 +10,14 @@ use crate::engine::render::windowing::swap_chain::{SwapChain, SwapChainSupport};
 use crate::engine::render::windowing::synchronization_support::SynchronizationSupport;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
-use crate::error::{NeuclidioError, NeuclidioResult};
+use crate::error::NeuclidioResult;
+use bus::BusReader;
 use itertools::Itertools;
 use log::{debug, info, trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_void};
+use std::sync::{Arc, mpsc};
+use std::thread::{JoinHandle, spawn};
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::vk::{
     DeviceV1_0, EntryV1_0, ExtDebugUtilsExtensionInstanceCommands, HasBuilder, InstanceV1_0,
@@ -21,12 +25,13 @@ use vulkanalia::vk::{
 use vulkanalia::window as vk_window;
 use vulkanalia::{Device, Entry, Instance, Version, vk};
 use vulkanalia_vma::{Allocator, AllocatorOptions};
+use winit::dpi::PhysicalSize;
 use winit::window::{Window, WindowId};
 
-pub mod builder;
+pub mod config;
 pub mod error;
-pub mod pipeline;
 
+pub(crate) mod pipeline;
 pub(crate) mod renderable;
 pub(crate) mod vulkan_context;
 pub(crate) mod windowing;
@@ -47,37 +52,110 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 /// The Vulkan SDK version that included synchronization2 into the core specification
 const SYNCHRONIZATION2_VULKAN_VERSION: Version = Version::new(1, 3, 0);
 
-pub struct RenderEngine {
+pub(crate) struct RenderEngine {
     application_info: vk::ApplicationInfo,
+    internal_event_bus_reader: BusReader<EngineInternalEvent>,
     vulkan_context: Option<VulkanContext>,
     render_pipeline: Option<RenderPipeline>,
     windows: HashMap<WindowId, NeuclidioWindow>,
 }
 
 impl RenderEngine {
-    pub fn new(application_info: vk::ApplicationInfo) -> Self {
+    pub fn new(
+        internal_event_bus_reader: BusReader<EngineInternalEvent>,
+        application_info: vk::ApplicationInfo,
+    ) -> Self {
         Self {
             application_info,
+            internal_event_bus_reader,
             vulkan_context: None,
             render_pipeline: None,
             windows: HashMap::new(),
         }
     }
 
-    pub fn prepare_for_window(&mut self, window: &Window) -> NeuclidioResult<()> {
+    pub fn spawn(mut self) -> JoinHandle<()> {
+        spawn(move || {
+            loop {
+                // Process events
+                let mut should_exit = false;
+
+                loop {
+                    match self.internal_event_bus_reader.try_recv() {
+                        Ok(event) => {
+                            if let Err(err) = self.handle_internal_event(event) {
+                                warn!(
+                                    "Failed to handle internal event in Neuclidio render engine with error: {err:?}"
+                                );
+                            }
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            should_exit = true;
+                            break;
+                        }
+                    }
+                }
+
+                if should_exit {
+                    break;
+                }
+
+                // Render
+
+                if let Err(err) = self.render() {
+                    warn!("Failed to render with error: {err:?}");
+                }
+            }
+        })
+    }
+
+    fn handle_internal_event(
+        &mut self,
+        internal_event: EngineInternalEvent,
+    ) -> NeuclidioResult<()> {
+        match internal_event {
+            EngineInternalEvent::WindowCreated(window) => {
+                self.handle_window_created(window)?;
+            }
+            EngineInternalEvent::WindowResized(window, new_window_size) => {
+                self.handle_window_resized(window, new_window_size)?;
+            }
+            EngineInternalEvent::WindowClosed(window) => {
+                self.handle_window_closed(window)?;
+            }
+            EngineInternalEvent::EntityAdded(window_id, entity) => {
+                self.handle_entity_added(window_id, entity)?;
+            }
+            EngineInternalEvent::EntityRemoved(window_ids, entity) => {
+                self.handle_entity_removed(window_ids, entity)?;
+            }
+            EngineInternalEvent::RenderableAdded(renderable, entity) => {
+                self.handle_renderable_added(entity, renderable)?;
+            }
+            EngineInternalEvent::RenderableRemoved(renderable, entity) => {
+                self.handle_renderable_removed(entity, renderable)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_window_created(&mut self, window: Arc<Window>) -> NeuclidioResult<()> {
         let window_id = window.id();
 
         let surface = if let Some(vulkan_context) = self.vulkan_context.as_ref() {
             debug!("Creating Vulkan surface for window with id: {window_id:?}");
-            Self::create_surface(&vulkan_context.instance, window)?
+            Self::create_surface(&vulkan_context.instance, window.clone())?
         } else {
-            self.prepare_vulkan(window)?
+            self.prepare_vulkan(window.clone())?
         };
 
         let neuclidio_window = NeuclidioWindow {
             id: window_id,
             surface,
             swap_chain: None,
+            last_window_size: window.inner_size(),
         };
 
         self.windows.insert(window_id, neuclidio_window);
@@ -85,33 +163,23 @@ impl RenderEngine {
         Ok(())
     }
 
-    pub fn render_on_window(&mut self, window: &Window) -> NeuclidioResult<()> {
-        if let Some(true) = window.is_minimized() {
-            return Ok(());
+    fn handle_window_resized(
+        &mut self,
+        window: Arc<Window>,
+        new_window_size: PhysicalSize<u32>,
+    ) -> NeuclidioResult<()> {
+        if let Some(neuclidio_window) = self.windows.get_mut(&window.id()) {
+            neuclidio_window.last_window_size = new_window_size;
         }
 
-        if let (Some(vulkan_context), Some(render_pipeline), Some(neuclidio_window)) = (
-            self.vulkan_context.as_ref(),
-            self.render_pipeline.as_mut(),
-            self.windows.get(&window.id()),
-        ) {
-            match render_pipeline.render(vulkan_context, neuclidio_window) {
-                Ok(_) => {}
-                Err(NeuclidioError::RenderError(RenderError::OutOfDateSwapChain)) => {
-                    self.handle_window_change(window)?;
-                    return Ok(());
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
+        self.handle_window_resized_by_id(window.id())?;
         Ok(())
     }
 
-    pub fn handle_window_change(&mut self, window: &Window) -> NeuclidioResult<()> {
+    fn handle_window_resized_by_id(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
         if let (Some(vulkan_context), Some(neuclidio_window)) = (
             self.vulkan_context.as_ref(),
-            self.windows.get_mut(&window.id()),
+            self.windows.get_mut(&window_id),
         ) {
             unsafe { vulkan_context.logical_device.device_wait_idle()? };
 
@@ -124,9 +192,9 @@ impl RenderEngine {
             }
 
             let swap_chain = SwapChain::new(
-                window,
                 vulkan_context,
                 neuclidio_window,
+                window_id,
                 2,                                                        // TODO: Make configurable
                 &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
             )?;
@@ -141,7 +209,8 @@ impl RenderEngine {
         Ok(())
     }
 
-    pub fn clean_up_for_window(&mut self, window_id: WindowId) -> NeuclidioResult<()> {
+    fn handle_window_closed(&mut self, window: Arc<Window>) -> NeuclidioResult<()> {
+        let window_id = window.id();
         if let (Some(vulkan_context), Some(neuclidio_window)) = (
             self.vulkan_context.as_ref(),
             self.windows.get_mut(&window_id),
@@ -164,7 +233,7 @@ impl RenderEngine {
         Ok(())
     }
 
-    pub fn submit_entity(&mut self, window_id: WindowId, entity: &Entity) -> NeuclidioResult<()> {
+    fn handle_entity_added(&mut self, window_id: WindowId, entity: Entity) -> NeuclidioResult<()> {
         if let (Some(vulkan_context), Some(render_pipeline), Some(neuclidio_window)) = (
             self.vulkan_context.as_ref(),
             self.render_pipeline.as_mut(),
@@ -176,17 +245,21 @@ impl RenderEngine {
         Ok(())
     }
 
-    pub fn remove_entity(&mut self, entity: &Entity) -> NeuclidioResult<()> {
+    fn handle_entity_removed(
+        &mut self,
+        window_ids: Vec<WindowId>,
+        entity: Entity,
+    ) -> NeuclidioResult<()> {
         if let Some(render_pipeline) = self.render_pipeline.as_mut() {
-            render_pipeline.remove_entity(entity)?;
+            render_pipeline.remove_entity(window_ids, entity)?;
         }
 
         Ok(())
     }
 
-    pub fn handle_renderable_added(
+    fn handle_renderable_added(
         &mut self,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         if let (Some(vulkan_context), Some(render_pipeline)) =
@@ -198,9 +271,9 @@ impl RenderEngine {
         Ok(())
     }
 
-    pub fn handle_renderable_removed(
+    fn handle_renderable_removed(
         &mut self,
-        entity: &Entity,
+        entity: Entity,
         renderable: Renderable,
     ) -> NeuclidioResult<()> {
         if let Some(render_pipeline) = self.render_pipeline.as_mut() {
@@ -210,7 +283,30 @@ impl RenderEngine {
         Ok(())
     }
 
-    fn prepare_vulkan(&mut self, window: &Window) -> NeuclidioResult<vk::SurfaceKHR> {
+    fn render(&mut self) -> NeuclidioResult<()> {
+        if self.windows.is_empty() {
+            return Ok(());
+        }
+
+        let changed_window_ids = if let (Some(vulkan_context), Some(render_pipeline)) =
+            (self.vulkan_context.as_ref(), self.render_pipeline.as_mut())
+        {
+            match render_pipeline.render(vulkan_context, &self.windows) {
+                Ok(changed_window_ids) => changed_window_ids,
+                Err(err) => return Err(err),
+            }
+        } else {
+            vec![]
+        };
+
+        for window_id in changed_window_ids.into_iter() {
+            self.handle_window_resized_by_id(window_id)?;
+        }
+
+        Ok(())
+    }
+
+    fn prepare_vulkan(&mut self, window: Arc<Window>) -> NeuclidioResult<vk::SurfaceKHR> {
         let window_id = window.id();
 
         let vulkan_entry = unsafe {
@@ -220,16 +316,16 @@ impl RenderEngine {
 
         debug!("Creating Vulkan instance");
         #[cfg(debug_assertions)]
-        let (instance, debug_messenger) = self.create_instance(&vulkan_entry, window)?;
+        let (instance, debug_messenger) = self.create_instance(&vulkan_entry, window.clone())?;
 
         #[cfg(not(debug_assertions))]
-        let (instance, _) = self.create_instance(window)?;
+        let (instance, _) = self.create_instance(&vulkan_entry, window.clone())?;
 
         debug!("Creating Vulkan surface for window with id: {window_id:?}");
         let surface = Self::create_surface(&instance, window)?;
 
         debug!("Picking Vulkan physical device");
-        let (physical_device, queue_family_indices, swap_chain_support) =
+        let (physical_device, queue_family_indices) =
             Self::pick_physical_device(&instance, surface)?;
 
         debug!("Creating Vulkan logical device");
@@ -250,7 +346,6 @@ impl RenderEngine {
         let transfer_queue = Self::get_device_queue(&logical_device, queue_family_indices.transfer);
 
         let vulkan_context = VulkanContext {
-            vulkan_entry,
             instance,
             logical_device,
             allocator,
@@ -277,7 +372,7 @@ impl RenderEngine {
     fn create_instance(
         &self,
         vulkan_entry: &Entry,
-        window: &Window,
+        window: Arc<Window>,
     ) -> NeuclidioResult<(Instance, Option<vk::DebugUtilsMessengerEXT>)> {
         let vulkan_version = vulkan_entry.version()?;
 
@@ -299,7 +394,7 @@ impl RenderEngine {
             vec![]
         };
 
-        let mut extensions: Vec<_> = vk_window::get_required_instance_extensions(window)
+        let mut extensions: Vec<_> = vk_window::get_required_instance_extensions(window.as_ref())
             .iter()
             .map(|e| e.as_ptr())
             .collect();
@@ -347,8 +442,10 @@ impl RenderEngine {
                     .build(),
             );
 
-            instance_create_info_builder = instance_create_info_builder
-                .push_next(debug_messenger_create_info.as_mut().unwrap());
+            if let Some(debug_messenger_create_info) = debug_messenger_create_info.as_mut() {
+                instance_create_info_builder =
+                    instance_create_info_builder.push_next(debug_messenger_create_info);
+            }
         }
 
         let instance =
@@ -445,15 +542,16 @@ impl RenderEngine {
         Ok(logical_device)
     }
 
-    fn create_surface(instance: &Instance, window: &Window) -> NeuclidioResult<vk::SurfaceKHR> {
-        let surface = unsafe { vk_window::create_surface(instance, window, window)? };
+    fn create_surface(instance: &Instance, window: Arc<Window>) -> NeuclidioResult<vk::SurfaceKHR> {
+        let surface =
+            unsafe { vk_window::create_surface(instance, window.as_ref(), window.as_ref())? };
         Ok(surface)
     }
 
     fn pick_physical_device(
         instance: &Instance,
         surface: vk::SurfaceKHR,
-    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices, SwapChainSupport)> {
+    ) -> NeuclidioResult<(vk::PhysicalDevice, QueueFamilyIndices)> {
         let mut viable_physical_devices = vec![];
 
         unsafe {
@@ -467,11 +565,9 @@ impl RenderEngine {
                             properties.device_name, err
                         );
                     }
-                    Ok((queue_family_indices, swap_chain_support)) => {
-                        viable_physical_devices.push((
-                            (physical_device, queue_family_indices, swap_chain_support),
-                            properties,
-                        ));
+                    Ok(queue_family_indices) => {
+                        viable_physical_devices
+                            .push(((physical_device, queue_family_indices), properties));
                     }
                 }
             }
@@ -504,13 +600,13 @@ impl RenderEngine {
         instance: &Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> NeuclidioResult<(QueueFamilyIndices, SwapChainSupport)> {
+    ) -> NeuclidioResult<QueueFamilyIndices> {
         let queue_family_indices = QueueFamilyIndices::new(instance, surface, physical_device)?;
-        let swap_chain_support = SwapChainSupport::new(instance, surface, physical_device)?;
+        SwapChainSupport::new(instance, surface, physical_device)?;
         DeviceExtensionSupport::new(instance, physical_device, DEVICE_EXTENSIONS)?;
         SynchronizationSupport::new(instance, physical_device)?;
 
-        Ok((queue_family_indices, swap_chain_support))
+        Ok(queue_family_indices)
     }
 
     fn rate_physical_device(physical_device_properties: vk::PhysicalDeviceProperties) -> u32 {

@@ -9,7 +9,7 @@ use vulkanalia::vk::{
     KhrSwapchainExtensionDeviceCommands,
 };
 use vulkanalia::{Instance, vk};
-use winit::window::{Window, WindowId};
+use winit::window::WindowId;
 
 pub struct SwapChain {
     window_id: WindowId,
@@ -22,9 +22,9 @@ pub struct SwapChain {
 
 impl SwapChain {
     pub fn new(
-        window: &Window,
         vulkan_context: &VulkanContext,
         neuclidio_window: &NeuclidioWindow,
+        window_id: WindowId,
         preferred_image_count: u32,
         preferred_present_modes: &[vk::PresentModeKHR],
     ) -> NeuclidioResult<Self> {
@@ -39,7 +39,7 @@ impl SwapChain {
         let surface_format = Self::get_surface_format(&swap_chain_support.formats)?;
         let image_format = surface_format.format;
         let image_color_space = surface_format.color_space;
-        let extent = Self::get_extent(window, surface_capabilities);
+        let extent = Self::get_extent(neuclidio_window, surface_capabilities);
 
         let present_mode =
             Self::get_present_mode(&swap_chain_support.present_modes, preferred_present_modes)?;
@@ -70,7 +70,7 @@ impl SwapChain {
         let image_views = Self::create_image_views(vulkan_context, &images, image_format)?;
 
         let swap_chain = SwapChain {
-            window_id: window.id(),
+            window_id,
             chain,
             extent,
             image_format,
@@ -155,18 +155,20 @@ impl SwapChain {
     }
 
     fn get_extent(
-        window: &Window,
+        neuclidio_window: &NeuclidioWindow,
         surface_capabilities: vk::SurfaceCapabilitiesKHR,
     ) -> vk::Extent2D {
+        let last_window_size = neuclidio_window.last_window_size;
+
         if surface_capabilities.current_extent.width != u32::MAX {
             surface_capabilities.current_extent
         } else {
             vk::Extent2D::builder()
-                .width(window.inner_size().width.clamp(
+                .width(last_window_size.width.clamp(
                     surface_capabilities.min_image_extent.width,
                     surface_capabilities.max_image_extent.width,
                 ))
-                .height(window.inner_size().height.clamp(
+                .height(last_window_size.height.clamp(
                     surface_capabilities.min_image_extent.height,
                     surface_capabilities.max_image_extent.height,
                 ))

@@ -114,8 +114,7 @@ impl RenderPipelineSynchronizationState {
             .ok_or(RenderPipelineError::Unprepared.into())
     }
 
-    // TODO:REMOVE
-    pub fn finished_frame_index_by_window_id(
+    pub fn finished_frame_index(
         &self,
         vulkan_context: &VulkanContext,
         window_id: WindowId,
@@ -125,6 +124,7 @@ impl RenderPipelineSynchronizationState {
             .get(&window_id)
             .ok_or(RenderPipelineError::Unprepared)?
             .frame_index_semaphore;
+
         let frame_index_semaphore_value = unsafe {
             vulkan_context
                 .logical_device
@@ -132,21 +132,6 @@ impl RenderPipelineSynchronizationState {
         };
 
         Ok(frame_index_semaphore_value / 2)
-    }
-
-    pub fn finished_frame_index(
-        &self,
-        vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<u64> {
-        let frame_index_semaphore = self.frame_index_semaphore(neuclidio_window)?;
-        let frame_index_semaphore_value = unsafe {
-            vulkan_context
-                .logical_device
-                .get_semaphore_counter_value(frame_index_semaphore)?
-        };
-
-        Ok(frame_index_semaphore_value)
     }
 
     pub fn frame_index(&self, neuclidio_window: &NeuclidioWindow) -> NeuclidioResult<u64> {

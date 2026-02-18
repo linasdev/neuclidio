@@ -3,12 +3,14 @@ use crate::engine::render::windowing::swap_chain::SwapChain;
 use log::debug;
 use vulkanalia::vk;
 use vulkanalia::vk::KhrSurfaceExtensionInstanceCommands;
+use winit::dpi::PhysicalSize;
 use winit::window::WindowId;
 
 pub struct NeuclidioWindow {
     pub id: WindowId,
     pub surface: vk::SurfaceKHR,
     pub swap_chain: Option<SwapChain>,
+    pub last_window_size: PhysicalSize<u32>,
 }
 
 impl NeuclidioWindow {

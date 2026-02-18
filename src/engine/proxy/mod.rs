@@ -1,3 +1,4 @@
+use crate::engine::event::EngineEvent;
 use crate::engine::proxy::error::EngineProxyError;
 use crate::engine::proxy::request::EngineProxyRequest;
 use crate::engine::render::windowing::error::WindowingError;
@@ -5,7 +6,6 @@ use crate::engine::render::windowing::event::*;
 use crate::engine::thread::EngineThread;
 use crate::entity::Entity;
 use crate::error::{NeuclidioError, NeuclidioResult};
-use crate::event::Event;
 use crate::id::EntityId;
 use bus::BusReader;
 use log::info;
@@ -17,16 +17,16 @@ pub mod error;
 pub mod request;
 
 pub struct EngineProxy {
-    event_bus_reader: BusReader<Event>,
+    event_bus_reader: BusReader<EngineEvent>,
     event_loop_proxy: EventLoopProxy<WindowingEvent>,
-    proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
+    proxy_request_sender: crossbeam_channel::Sender<EngineProxyRequest>,
 }
 
 impl EngineProxy {
     pub(crate) fn new(
-        event_bus_reader: BusReader<Event>,
+        event_bus_reader: BusReader<EngineEvent>,
         event_loop_proxy: EventLoopProxy<WindowingEvent>,
-        proxy_request_sender: mpsc::Sender<EngineProxyRequest>,
+        proxy_request_sender: crossbeam_channel::Sender<EngineProxyRequest>,
     ) -> Self {
         Self {
             event_bus_reader,
@@ -36,7 +36,7 @@ impl EngineProxy {
     }
 
     pub fn add_proxy(&self) -> NeuclidioResult<EngineProxy> {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
         self.send_proxy_request(EngineProxyRequest::AddProxy(sender));
 
         receiver
@@ -68,10 +68,10 @@ impl EngineProxy {
         self.send_proxy_request(EngineProxyRequest::RemoveEntityById(entity_id))
     }
 
-    pub fn add_window(&self, window_attributes: WindowAttributes) -> AddWindowResult {
-        let (sender, receiver) = mpsc::channel();
+    pub fn create_window(&self, window_attributes: WindowAttributes) -> CreateWindowResult {
+        let (sender, receiver) = crossbeam_channel::bounded(1);
         self.event_loop_proxy
-            .send_event(WindowingEvent::AddWindow(window_attributes, sender))
+            .send_event(WindowingEvent::CreateWindow(window_attributes, sender))
             .map_err(WindowingError::from)?;
 
         receiver
@@ -80,7 +80,7 @@ impl EngineProxy {
     }
 
     pub fn close_window(&self, window_id: WindowId) -> CloseWindowResult {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = crossbeam_channel::bounded(1);
         self.event_loop_proxy
             .send_event(WindowingEvent::CloseWindow(window_id, sender))
             .map_err(WindowingError::from)?;
@@ -90,7 +90,7 @@ impl EngineProxy {
             .map_err(|_| NeuclidioError::from(EngineProxyError::ChannelClosed))?
     }
 
-    pub fn poll_for_event(&mut self) -> NeuclidioResult<Option<Event>> {
+    pub fn poll_for_event(&mut self) -> NeuclidioResult<Option<EngineEvent>> {
         match self.event_bus_reader.try_recv() {
             Ok(event) => Ok(Some(event)),
             Err(mpsc::TryRecvError::Empty) => Ok(None),
