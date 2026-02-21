@@ -8,7 +8,7 @@ pub enum PagedSparseSetError {
 #[derive(Debug)]
 pub struct PagedSparseSet<const PAGE_SIZE: usize, T> {
     sparse_pages: Vec<Option<Box<SparseSetPage<PAGE_SIZE>>>>,
-    dense: Vec<(usize, T)>,
+    dense: Vec<(u32, T)>,
 }
 
 #[derive(Debug)]
@@ -27,7 +27,7 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         }
     }
 
-    pub fn insert(&mut self, sparse_index: usize, item: T) -> NeuclidioResult<()> {
+    pub fn insert(&mut self, sparse_index: u32, item: T) -> NeuclidioResult<()> {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
 
         if sparse_page_index >= self.sparse_pages.len() {
@@ -49,7 +49,7 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         Ok(())
     }
 
-    pub fn remove(&mut self, sparse_index: usize) -> Option<T> {
+    pub fn remove(&mut self, sparse_index: u32) -> Option<T> {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
         let sparse_page = self.sparse_pages.get_mut(sparse_page_index)?.as_mut()?;
         let dense_index = sparse_page.indices[sparse_item_index].take()?;
@@ -72,19 +72,19 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         Some(item)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (usize, &T)> {
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &T)> {
         self.dense
             .iter()
             .map(|(sparse_index, item)| (*sparse_index, item))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (u32, &mut T)> {
         self.dense
             .iter_mut()
             .map(|(sparse_index, item)| (*sparse_index, item))
     }
 
-    pub fn get(&self, sparse_index: usize) -> Option<&T> {
+    pub fn get(&self, sparse_index: u32) -> Option<&T> {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
         let sparse_page = self.sparse_pages.get(sparse_page_index)?.as_ref()?;
         let dense_index = sparse_page.indices[sparse_item_index]?;
@@ -92,7 +92,7 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         Some(&self.dense.get(dense_index).unwrap().1)
     }
 
-    pub fn get_mut(&mut self, sparse_index: usize) -> Option<&mut T> {
+    pub fn get_mut(&mut self, sparse_index: u32) -> Option<&mut T> {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
         let sparse_page = self.sparse_pages.get_mut(sparse_page_index)?.as_mut()?;
         let dense_index = sparse_page.indices[sparse_item_index]?;
@@ -100,7 +100,7 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         Some(&mut self.dense.get_mut(dense_index).unwrap().1)
     }
 
-    pub fn contains(&self, sparse_index: usize) -> bool {
+    pub fn contains(&self, sparse_index: u32) -> bool {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
 
         if let Some(Some(sparse_page)) = self.sparse_pages.get(sparse_page_index) {
@@ -110,7 +110,8 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         }
     }
 
-    fn get_page_and_item_indices(sparse_index: usize) -> (usize, usize) {
+    fn get_page_and_item_indices(sparse_index: u32) -> (usize, usize) {
+        let sparse_index = sparse_index as usize;
         let sparse_page_index = sparse_index >> Self::PAGE_INDEX_BITSHIFT;
         let sparse_item_index = sparse_index & Self::ITEM_INDEX_BITMASK;
 
@@ -249,7 +250,7 @@ mod tests {
 
         // Execute
         paged_sparse_set
-            .insert(PAGE_SIZE_FOR_TESTS * 10, 0x12)
+            .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x12)
             .unwrap();
 
         // Assert
@@ -275,7 +276,7 @@ mod tests {
         );
         assert_that!(
             paged_sparse_set.dense,
-            elements_are![eq(&(PAGE_SIZE_FOR_TESTS * 10, 0x12))]
+            elements_are![eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x12))]
         );
     }
 
@@ -284,12 +285,12 @@ mod tests {
         // Setup
         let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
         paged_sparse_set
-            .insert(PAGE_SIZE_FOR_TESTS * 10 + 1, 0x12)
+            .insert(PAGE_SIZE_FOR_TESTS as u32 * 10 + 1, 0x12)
             .unwrap();
 
         // Execute
         paged_sparse_set
-            .insert(PAGE_SIZE_FOR_TESTS * 10, 0x34)
+            .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34)
             .unwrap();
 
         // Assert
@@ -317,8 +318,8 @@ mod tests {
         assert_that!(
             paged_sparse_set.dense,
             elements_are![
-                eq(&(PAGE_SIZE_FOR_TESTS * 10 + 1, 0x12)),
-                eq(&(PAGE_SIZE_FOR_TESTS * 10, 0x34))
+                eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10 + 1, 0x12)),
+                eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34))
             ]
         );
     }
@@ -331,7 +332,7 @@ mod tests {
 
         // Execute
         paged_sparse_set
-            .insert(PAGE_SIZE_FOR_TESTS * 10, 0x34)
+            .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34)
             .unwrap();
 
         // Assert
@@ -376,7 +377,7 @@ mod tests {
         );
         assert_that!(
             paged_sparse_set.dense,
-            elements_are![eq(&(2048, 0x12)), eq(&(PAGE_SIZE_FOR_TESTS * 10, 0x34))]
+            elements_are![eq(&(2048, 0x12)), eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34))]
         );
     }
 
