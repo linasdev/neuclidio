@@ -22,6 +22,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 mod main_thread;
 
 pub mod builder;
+pub mod ecs;
 pub mod event;
 pub mod proxy;
 pub mod render;
