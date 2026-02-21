@@ -1,8 +1,8 @@
+use crate::component::renderable::Renderable;
 use crate::engine::event::EngineInternalEvent;
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
 use crate::engine::render::pipeline::{RenderPipeline, RenderPipelineExt};
-use crate::engine::render::renderable::Renderable;
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::device_extension_support::DeviceExtensionSupport;
 use crate::engine::render::windowing::queue_family_indices::QueueFamilyIndices;
@@ -32,7 +32,6 @@ pub mod config;
 pub mod error;
 
 pub(crate) mod pipeline;
-pub(crate) mod renderable;
 pub(crate) mod vulkan_context;
 pub(crate) mod windowing;
 
@@ -196,22 +195,13 @@ impl RenderEngine {
                 render_pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window);
             }
 
-            let old_swap_chain = if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
-                Some(swap_chain.destroy_without_chain(vulkan_context))
-            } else {
-                None
-            };
-
-            let swap_chain = SwapChain::new(
+            SwapChain::new(
                 vulkan_context,
                 neuclidio_window,
                 window_id,
-                old_swap_chain,
                 2,                                                        // TODO: Make configurable
                 &[vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::FIFO], // TODO: Make configurable
             )?;
-
-            neuclidio_window.swap_chain.replace(swap_chain);
 
             if let Some(render_pipeline) = self.render_pipeline.as_mut() {
                 render_pipeline.reset_window(vulkan_context, neuclidio_window)?;
@@ -231,10 +221,6 @@ impl RenderEngine {
 
             if let Some(render_pipeline) = self.render_pipeline.as_mut() {
                 render_pipeline.clean_up_for_window(vulkan_context, neuclidio_window);
-            }
-
-            if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
-                swap_chain.destroy(vulkan_context);
             }
 
             if let Some(neuclidio_window) = self.windows.remove(&window_id) {
@@ -341,7 +327,7 @@ impl RenderEngine {
             Self::pick_physical_device(&instance, surface)?;
 
         debug!("Creating Vulkan logical device");
-        let logical_device = self.create_logical_device(
+        let logical_device = Self::create_logical_device(
             &vulkan_entry,
             &instance,
             physical_device,
@@ -370,10 +356,11 @@ impl RenderEngine {
             debug_messenger: debug_messenger.unwrap(),
         };
 
-        let render_pipeline = RenderPipeline::Standard(Box::new(StandardRenderPipeline::new(
+        let render_pipeline = StandardRenderPipeline::new(
             &vulkan_context,
             2, // TODO: Make this configurable
-        )?));
+        )?
+        .into();
 
         self.vulkan_context.replace(vulkan_context);
         self.render_pipeline.replace(render_pipeline);
@@ -478,7 +465,6 @@ impl RenderEngine {
     }
 
     fn create_logical_device(
-        &self,
         vulkan_entry: &Entry,
         instance: &Instance,
         physical_device: vk::PhysicalDevice,

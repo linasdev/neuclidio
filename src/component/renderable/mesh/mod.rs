@@ -1,7 +1,7 @@
-use crate::component::{Component, ComponentExt};
+use crate::component::ComponentExt;
+use crate::component::renderable::{RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::pipeline::common::vertex::Vertex;
-use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
-use crate::id::{MeshId, RenderBufferId, RenderableId};
+use crate::id::{ComponentId, RenderBufferId};
 use std::collections::HashMap;
 use std::slice;
 use std::sync::{Arc, Mutex};
@@ -12,17 +12,13 @@ pub mod loader;
 
 #[derive(Clone)]
 pub struct Mesh {
-    id: MeshId,
+    id: ComponentId,
     vertices: Arc<Vec<Vertex>>,
     indices: Arc<Vec<u32>>,
     memory_allocation: Arc<Mutex<Option<RenderableMemoryAllocation>>>,
 }
 
 impl RenderableExt for Mesh {
-    fn id(&self) -> RenderableId {
-        RenderableId::Mesh(self.id)
-    }
-
     fn render_buffer_id(&self) -> Option<RenderBufferId> {
         self.memory_allocation
             .lock()
@@ -92,16 +88,8 @@ impl RenderableExt for Mesh {
     }
 }
 
-impl ComponentExt for Mesh {}
-
-impl From<Mesh> for Component {
-    fn from(value: Mesh) -> Self {
-        Component::Mesh(value)
-    }
-}
-
-impl From<Mesh> for Renderable {
-    fn from(value: Mesh) -> Self {
-        Renderable::Mesh(value)
+impl ComponentExt for Mesh {
+    fn id(&self) -> ComponentId {
+        self.id
     }
 }

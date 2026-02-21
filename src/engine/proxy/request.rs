@@ -1,5 +1,5 @@
+use crate::component::renderable::Renderable;
 use crate::engine::proxy::EngineProxy;
-use crate::engine::render::renderable::Renderable;
 use crate::entity::Entity;
 use crate::id::EntityId;
 use winit::window::WindowId;

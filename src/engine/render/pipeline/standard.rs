@@ -1,3 +1,7 @@
+use crate::component::ComponentExt;
+use crate::component::camera::CameraExt;
+use crate::component::camera::orthographic::OrthographicCamera;
+use crate::component::renderable::{Renderable, RenderableExt};
 use crate::engine::render::error::RenderError;
 use crate::engine::render::pipeline::common::push_constant::PushConstantExt;
 use crate::engine::render::pipeline::common::push_constant::model::ModelPushConstant;
@@ -11,7 +15,6 @@ use crate::engine::render::pipeline::common::state::transfer::RenderPipelineTran
 use crate::engine::render::pipeline::common::uniform::ViewProjectionUniform;
 use crate::engine::render::pipeline::error::RenderPipelineError;
 use crate::engine::render::pipeline::{RenderPipelineExt, get_supported_image_format};
-use crate::engine::render::renderable::{Renderable, RenderableExt};
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
@@ -24,6 +27,7 @@ use std::collections::HashMap;
 use vulkanalia::vk;
 use vulkanalia::vk::{DeviceV1_0, Handle, HasBuilder, KhrSwapchainExtensionDeviceCommands};
 use winit::window::WindowId;
+use crate::component::camera::perspective::PerspectiveCamera;
 
 const RENDER_VERTEX_SHADER_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -63,6 +67,7 @@ impl StandardRenderPipeline {
         vulkan_context: &VulkanContext,
         max_frames_in_flight: usize,
     ) -> NeuclidioResult<Self> {
+        // TODO: Maybe figure out how to bring down to 1
         if max_frames_in_flight < 2 {
             return Err(RenderPipelineError::MaxFramesInFlightTooLittle.into());
         }
@@ -132,13 +137,10 @@ impl StandardRenderPipeline {
             .as_ref()
             .ok_or(RenderPipelineError::Unprepared)?;
 
+        let aspect_ratio = swap_chain.extent().width as f32 / swap_chain.extent().height as f32;
+
         let view = Mat4::IDENTITY;
-        let projection = Mat4::perspective_rh(
-            75f32.to_radians(),
-            swap_chain.extent().width as f32 / swap_chain.extent().height as f32,
-            0.1,
-            100.0,
-        );
+        let projection = PerspectiveCamera::default().get_projection_matrix(aspect_ratio);
 
         ViewProjectionUniform::new(view, projection)
             .load_into_uniform_buffer(uniform_buffer_memory);
@@ -249,7 +251,7 @@ impl StandardRenderPipeline {
                 (render_buffer_id, render_buffer_offset, last_used_in_frame)
             } else {
                 warn!(
-                    "Tried to render renderable with id '{:?}' without it being in the render buffer for window with id: {:?}",
+                    "Tried to render renderable with component id '{:?}' without it being in the render buffer for window with id: {:?}",
                     renderable.id(),
                     neuclidio_window.id
                 );

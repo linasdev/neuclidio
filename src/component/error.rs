@@ -1,4 +1,4 @@
-use crate::component::mesh::loader::error::MeshLoaderError;
+use crate::component::renderable::mesh::loader::error::MeshLoaderError;
 use crate::error::NeuclidioError;
 
 #[derive(Debug)]

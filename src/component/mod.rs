@@ -1,38 +1,37 @@
-use crate::component::mesh::Mesh;
-use crate::engine::render::renderable::Renderable;
+use crate::component::camera::Camera;
+use crate::component::camera::orthographic::OrthographicCamera;
+use crate::component::camera::perspective::PerspectiveCamera;
+use crate::component::renderable::Renderable;
+use crate::component::renderable::mesh::Mesh;
+use crate::id::ComponentId;
+use delegate::delegate;
+use derive_more::{From, TryInto};
 
+pub mod camera;
 pub mod error;
-pub mod mesh;
+pub mod renderable;
 
-pub trait ComponentExt: Into<Component> {}
+pub trait ComponentExt: Into<Component> {
+    fn id(&self) -> ComponentId;
+}
 
+#[derive(From, TryInto)]
+#[try_into(ref, ref_mut)]
 pub enum Component {
-    Mesh(Mesh),
+    #[from(Renderable, Mesh)]
+    Renderable(Renderable),
+
+    #[from(Camera, PerspectiveCamera, OrthographicCamera)]
+    Camera(Camera),
 }
 
-impl ComponentExt for Component {}
-
-#[allow(unreachable_patterns)]
-impl TryFrom<&Component> for Renderable {
-    type Error = ();
-
-    fn try_from(component: &Component) -> Result<Self, Self::Error> {
-        match component {
-            Component::Mesh(mesh) => Ok(mesh.clone().into()),
-            _ => Err(()),
+impl ComponentExt for Component {
+    delegate! {
+        to match self {
+            Component::Renderable(c) => c,
+            Component::Camera(c) => c,
+        } {
+            fn id(&self) -> ComponentId;
         }
-    }
-}
-
-#[allow(irrefutable_let_patterns)]
-impl<'a> TryFrom<&'a mut Component> for &'a mut Mesh {
-    type Error = ();
-
-    fn try_from(component: &'a mut Component) -> Result<Self, Self::Error> {
-        if let Component::Mesh(mesh) = component {
-            return Ok(mesh);
-        }
-
-        Err(())
     }
 }

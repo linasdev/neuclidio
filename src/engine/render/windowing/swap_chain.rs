@@ -23,12 +23,11 @@ pub struct SwapChain {
 impl SwapChain {
     pub fn new(
         vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
+        neuclidio_window: &mut NeuclidioWindow,
         window_id: WindowId,
-        old_swap_chain: Option<vk::SwapchainKHR>,
         preferred_image_count: u32,
         preferred_present_modes: &[vk::PresentModeKHR],
-    ) -> NeuclidioResult<Self> {
+    ) -> NeuclidioResult<()> {
         let logical_device = &vulkan_context.logical_device;
         let swap_chain_support = SwapChainSupport::new(
             &vulkan_context.instance,
@@ -60,9 +59,9 @@ impl SwapChain {
             .present_mode(present_mode)
             .clipped(true);
 
-        if let Some(old_swap_chain) = old_swap_chain {
+        if let Some(swap_chain) = neuclidio_window.swap_chain.as_ref() {
             swap_chain_create_info_builder =
-                swap_chain_create_info_builder.old_swapchain(old_swap_chain);
+                swap_chain_create_info_builder.old_swapchain(swap_chain.chain);
         }
 
         let (chain, images) = unsafe {
@@ -83,10 +82,16 @@ impl SwapChain {
             image_views,
         };
 
-        Ok(swap_chain)
+        if let Some(swap_chain) = neuclidio_window.swap_chain.take() {
+            swap_chain.destroy(vulkan_context);
+        }
+
+        neuclidio_window.swap_chain.replace(swap_chain);
+
+        Ok(())
     }
 
-    pub fn destroy_without_chain(self, vulkan_context: &VulkanContext) -> vk::SwapchainKHR {
+    pub fn destroy(self, vulkan_context: &VulkanContext) {
         debug!(
             "Destroying Vulkan swap chain image views for window with id: {:?}",
             self.window_id,
@@ -100,19 +105,15 @@ impl SwapChain {
             }
         }
 
-        self.chain
-    }
-
-    pub fn destroy(self, vulkan_context: &VulkanContext) {
-        let window_id = self.window_id;
-        let chain = self.destroy_without_chain(vulkan_context);
-
-        debug!("Destroying Vulkan swap chain for window with id: {window_id:?}");
+        debug!(
+            "Destroying Vulkan swap chain for window with id: {:?}",
+            self.window_id
+        );
 
         unsafe {
             vulkan_context
                 .logical_device
-                .destroy_swapchain_khr(chain, None);
+                .destroy_swapchain_khr(self.chain, None);
         }
     }
 

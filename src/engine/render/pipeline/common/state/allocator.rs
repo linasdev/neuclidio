@@ -1,8 +1,10 @@
+use crate::component::ComponentExt;
+use crate::component::renderable::memory_allocation::RenderableMemoryAllocation;
+use crate::component::renderable::{Renderable, RenderableExt};
 use crate::engine::render::pipeline::common::state::synchronization::RenderPipelineSynchronizationState;
 use crate::engine::render::pipeline::common::state::transfer::RenderPipelineTransferState;
 use crate::engine::render::pipeline::create_buffer;
 use crate::engine::render::pipeline::error::RenderPipelineError;
-use crate::engine::render::renderable::{Renderable, RenderableExt, RenderableMemoryAllocation};
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::error::{NeuclidioError, NeuclidioResult};
@@ -321,7 +323,7 @@ impl RenderPipelineAllocatorState {
     ) -> NeuclidioResult<()> {
         if renderable.render_buffer_id().is_some() {
             warn!(
-                "Tried to double allocate a renderable with id: {:?}",
+                "Tried to double allocate a renderable with component id: {:?}",
                 renderable.id()
             );
             return Ok(());
@@ -429,7 +431,7 @@ impl RenderPipelineAllocatorState {
         }
 
         warn!(
-            "Tried to double deallocate a renderable with id: {:?}",
+            "Tried to double deallocate a renderable with component id: {:?}",
             renderable.id()
         );
         Ok(())

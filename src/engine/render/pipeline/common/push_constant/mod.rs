@@ -1,4 +1,5 @@
 use crate::engine::render::pipeline::common::push_constant::model::ModelPushConstant;
+use delegate::delegate;
 
 pub mod model;
 
@@ -11,9 +12,11 @@ pub enum PushConstant {
 }
 
 impl PushConstantExt for PushConstant {
-    fn as_bytes(&self) -> &[u8] {
-        match self {
-            PushConstant::Model(model) => model.as_bytes(),
+    delegate! {
+        to match self {
+            PushConstant::Model(c) => c,
+        } {
+            fn as_bytes(&self) -> &[u8];
         }
     }
 }

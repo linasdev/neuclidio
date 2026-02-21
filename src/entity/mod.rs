@@ -1,7 +1,8 @@
+use crate::component::camera::{Camera, CameraExt};
+use crate::component::renderable::Renderable;
 use crate::component::{Component, ComponentExt};
 use crate::engine::proxy::EngineProxy;
 use crate::engine::proxy::request::EngineProxyRequest;
-use crate::engine::render::renderable::Renderable;
 use crate::entity::transform::{Transform, TransformExt};
 use crate::id::EntityId;
 use std::collections::HashSet;
@@ -62,7 +63,7 @@ impl Entity {
     where
         T: TransformExt,
         F: FnMut(&mut T),
-        for<'a> &'a mut Transform: TryInto<&'a mut T>,
+        for<'a> &'a mut T: TryFrom<&'a mut Transform>,
     {
         let mut transform = self.transform.lock().unwrap();
         if let Ok(inner_transform) = transform.deref_mut().try_into() {
@@ -73,11 +74,29 @@ impl Entity {
         false
     }
 
+    pub fn do_with_cameras<C, F>(&self, mut f: F) -> bool
+    where
+        C: CameraExt,
+        F: FnMut(&mut C),
+        for<'a> &'a mut C: TryFrom<&'a mut Camera>,
+    {
+        let mut invoked_at_least_once = false;
+
+        self.do_with_components::<Camera, _>(|mut camera| {
+            if let Ok(inner_camera) = camera.deref_mut().try_into() {
+                f(inner_camera);
+                invoked_at_least_once = true;
+            }
+        });
+
+        invoked_at_least_once
+    }
+
     pub fn do_with_components<C, F>(&self, mut f: F) -> bool
     where
         C: ComponentExt,
         F: FnMut(&mut C),
-        for<'a> &'a mut Component: TryInto<&'a mut C>,
+        for<'a> &'a mut C: TryFrom<&'a mut Component>,
     {
         let mut invoked_at_least_once = false;
 
@@ -96,11 +115,15 @@ impl Entity {
         C: ComponentExt,
     {
         let component = component.into();
-        let renderable = Renderable::try_from(&component);
+        let renderable = if let Ok(renderable) = <&Renderable>::try_from(&component) {
+            Some(renderable.clone())
+        } else {
+            None
+        };
 
         self.components.lock().unwrap().push(component);
 
-        if let Ok(renderable) = renderable {
+        if let Some(renderable) = renderable {
             proxy.send_proxy_request(EngineProxyRequest::HandleRenderableAdded(
                 self.id, renderable,
             ));
@@ -110,7 +133,7 @@ impl Entity {
     pub fn remove_components<C>(&mut self, proxy: &EngineProxy)
     where
         C: ComponentExt,
-        for<'a> &'a mut C: TryFrom<&'a Component>,
+        for<'a> &'a mut C: TryFrom<&'a mut Component>,
     {
         let mut components = self.components.lock().unwrap();
 
@@ -118,9 +141,10 @@ impl Entity {
             components.extract_if(.., |component| <&mut C>::try_from(component).is_err());
 
         for removed_component in removed_components {
-            if let Ok(renderable) = Renderable::try_from(&removed_component) {
+            if let Ok(renderable) = <&Renderable>::try_from(&removed_component) {
                 proxy.send_proxy_request(EngineProxyRequest::HandleRenderableRemoved(
-                    self.id, renderable,
+                    self.id,
+                    renderable.clone(),
                 ));
             }
         }
@@ -130,8 +154,8 @@ impl Entity {
         let mut renderables = vec![];
 
         for component in self.components.lock().unwrap().iter() {
-            if let Ok(renderable) = component.try_into() {
-                renderables.push(renderable);
+            if let Ok(renderable) = <&Renderable>::try_from(component) {
+                renderables.push(renderable.clone());
             }
         }
 

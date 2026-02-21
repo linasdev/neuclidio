@@ -1,4 +1,4 @@
-use crate::engine::render::renderable::Renderable;
+use crate::component::renderable::Renderable;
 use crate::entity::Entity;
 use std::sync::Arc;
 use winit::dpi::PhysicalSize;

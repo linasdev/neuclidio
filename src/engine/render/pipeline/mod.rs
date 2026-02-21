@@ -1,9 +1,11 @@
+use crate::component::renderable::Renderable;
 use crate::engine::render::pipeline::standard::StandardRenderPipeline;
-use crate::engine::render::renderable::Renderable;
 use crate::engine::render::vulkan_context::VulkanContext;
 use crate::engine::render::windowing::window::NeuclidioWindow;
 use crate::entity::Entity;
 use crate::error::NeuclidioResult;
+use delegate::delegate;
+use derive_more::From;
 use std::collections::HashMap;
 use vulkanalia::vk;
 use vulkanalia::vk::{HasBuilder, InstanceV1_0};
@@ -62,106 +64,59 @@ pub trait RenderPipelineExt {
     fn destroy(self, vulkan_context: &VulkanContext);
 }
 
+#[derive(From)]
 pub enum RenderPipeline {
+    #[from(forward)]
     Standard(Box<StandardRenderPipeline>),
 }
 
 impl RenderPipelineExt for RenderPipeline {
-    fn submit_entity(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-        entity: Entity,
-    ) -> NeuclidioResult<()> {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.submit_entity(vulkan_context, neuclidio_window, entity)
-            }
-        }
-    }
+    delegate! {
+        to match self {
+            RenderPipeline::Standard(p) => p,
+        } {
+            fn submit_entity(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                neuclidio_window: &NeuclidioWindow,
+                entity: Entity,
+            ) -> NeuclidioResult<()>;
+            fn remove_entity(&mut self, window_ids: Vec<WindowId>, entity: Entity) -> NeuclidioResult<()>;
 
-    fn remove_entity(&mut self, window_ids: Vec<WindowId>, entity: Entity) -> NeuclidioResult<()> {
-        match self {
-            RenderPipeline::Standard(pipeline) => pipeline.remove_entity(window_ids, entity),
-        }
-    }
+            fn handle_renderable_added(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                entity: Entity,
+                renderable: Renderable,
+            ) -> NeuclidioResult<()>;
+            fn handle_renderable_removed(
+                &mut self,
+                entity: Entity,
+                renderable: Renderable,
+            ) -> NeuclidioResult<()>;
 
-    fn handle_renderable_added(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        entity: Entity,
-        renderable: Renderable,
-    ) -> NeuclidioResult<()> {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.handle_renderable_added(vulkan_context, entity, renderable)
-            }
-        }
-    }
+            fn render(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                neuclidio_windows: &HashMap<WindowId, NeuclidioWindow>,
+            ) -> NeuclidioResult<Vec<WindowId>>;
 
-    fn handle_renderable_removed(
-        &mut self,
-        entity: Entity,
-        renderable: Renderable,
-    ) -> NeuclidioResult<()> {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.handle_renderable_removed(entity, renderable)
-            }
-        }
-    }
-
-    fn render(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        neuclidio_windows: &HashMap<WindowId, NeuclidioWindow>,
-    ) -> NeuclidioResult<Vec<WindowId>> {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.render(vulkan_context, neuclidio_windows)
-            }
-        }
-    }
-
-    fn prepare_for_window_reset(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.prepare_for_window_reset(vulkan_context, neuclidio_window)
-            }
-        }
-    }
-
-    fn reset_window(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) -> NeuclidioResult<()> {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.reset_window(vulkan_context, neuclidio_window)
-            }
-        }
-    }
-
-    fn clean_up_for_window(
-        &mut self,
-        vulkan_context: &VulkanContext,
-        neuclidio_window: &NeuclidioWindow,
-    ) {
-        match self {
-            RenderPipeline::Standard(pipeline) => {
-                pipeline.clean_up_for_window(vulkan_context, neuclidio_window)
-            }
-        }
-    }
-
-    fn destroy(self, vulkan_context: &VulkanContext) {
-        match self {
-            RenderPipeline::Standard(pipeline) => pipeline.destroy(vulkan_context),
+            fn prepare_for_window_reset(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                neuclidio_window: &NeuclidioWindow,
+            );
+            fn reset_window(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                neuclidio_window: &NeuclidioWindow,
+            ) -> NeuclidioResult<()>;
+            fn clean_up_for_window(
+                &mut self,
+                vulkan_context: &VulkanContext,
+                neuclidio_window: &NeuclidioWindow,
+            );
+            fn destroy(self, vulkan_context: &VulkanContext);
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::engine::render::pipeline::common::push_constant::PushConstant;
 use crate::engine::render::pipeline::common::push_constant::model::ModelPushConstant;
-use crate::entity::transform::{Transform, TransformExt};
+use crate::entity::transform::TransformExt;
 use glam::{Mat4, Quat, Vec3};
 
 #[derive(Clone)]
@@ -68,12 +68,6 @@ impl EuclideanTransform {
 impl TransformExt for EuclideanTransform {
     fn as_push_constant(&self) -> PushConstant {
         ModelPushConstant::new(self.get_model_matrix()).into()
-    }
-}
-
-impl From<EuclideanTransform> for Transform {
-    fn from(value: EuclideanTransform) -> Self {
-        Transform::Euclidean(value)
     }
 }
 
