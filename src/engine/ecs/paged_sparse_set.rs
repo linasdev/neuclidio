@@ -191,10 +191,7 @@ mod tests {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(
-            target.dense,
-            elements_are![eq(&(1, 0x12)), eq(&(0, 0x34))]
-        );
+        assert_that!(target.dense, elements_are![eq(&(1, 0x12)), eq(&(0, 0x34))]);
     }
 
     #[test]
@@ -540,10 +537,7 @@ mod tests {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(
-            target.dense,
-            elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]
-        );
+        assert_that!(target.dense, elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]);
     }
 
     #[test]
@@ -587,10 +581,7 @@ mod tests {
                 indices: each(none()),
             })),
         );
-        assert_that!(
-            target.dense,
-            elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]
-        );
+        assert_that!(target.dense, elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]);
     }
 
     #[test]
@@ -663,10 +654,7 @@ mod tests {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(
-            target.dense,
-            elements_are![eq(&(0, 0x12)), eq(&(2, 0x56))]
-        );
+        assert_that!(target.dense, elements_are![eq(&(0, 0x12)), eq(&(2, 0x56))]);
     }
 
     #[test]
@@ -789,10 +777,7 @@ mod tests {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(
-            target.dense,
-            elements_are![eq(&(0, 0x34)), eq(&(2, 0x56))]
-        );
+        assert_that!(target.dense, elements_are![eq(&(0, 0x34)), eq(&(2, 0x56))]);
     }
 
     #[test]
