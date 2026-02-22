@@ -27,6 +27,8 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
         }
     }
 
+    // TODO: Implement a deallocation function which would remove unused pages
+
     pub fn insert(&mut self, sparse_index: u32, item: T) -> NeuclidioResult<()> {
         let (sparse_page_index, sparse_item_index) = Self::get_page_and_item_indices(sparse_index);
 
@@ -59,10 +61,7 @@ impl<const PAGE_SIZE: usize, T> PagedSparseSet<PAGE_SIZE, T> {
             let (swapped_sparse_page_index, swapped_sparse_item_index) =
                 Self::get_page_and_item_indices(*swapped_sparse_index);
 
-            let swapped_sparse_page = self
-                .sparse_pages
-                .get_mut(swapped_sparse_page_index)
-                .unwrap()
+            let swapped_sparse_page = self.sparse_pages[swapped_sparse_page_index]
                 .as_mut()
                 .unwrap();
 
@@ -148,44 +147,44 @@ mod tests {
     #[test]
     fn should_insert_item_when_sparse_index_is_zero() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        target.insert(0, 0x12).unwrap();
 
         // Assert
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(0, 0x12))]);
+        assert_that!(target.dense, elements_are![eq(&(0, 0x12))]);
     }
 
     #[test]
     fn should_insert_item_when_sparse_index_is_zero_and_same_page_already_contains_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(1, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(1, 0x12).unwrap();
 
         // Execute
-        paged_sparse_set.insert(0, 0x34).unwrap();
+        target.insert(0, 0x34).unwrap();
 
         // Assert
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(1);
         expected_indices[1] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -193,7 +192,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(1, 0x12)), eq(&(0, 0x34))]
         );
     }
@@ -201,11 +200,11 @@ mod tests {
     #[test]
     fn should_insert_item_when_sparse_index_is_zero_and_different_page_already_contains_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(2048, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(2048, 0x12).unwrap();
 
         // Execute
-        paged_sparse_set.insert(0, 0x34).unwrap();
+        target.insert(0, 0x34).unwrap();
 
         // Assert
         let mut expected_indices_0 = [None; PAGE_SIZE_FOR_TESTS];
@@ -214,9 +213,9 @@ mod tests {
         let mut expected_indices_2 = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices_2[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(3)));
+        assert_that!(target.sparse_pages, len(eq(3)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -224,13 +223,13 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[1]
+            target.sparse_pages[1]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             none(),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -238,7 +237,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(2048, 0x12)), eq(&(0, 0x34))]
         );
     }
@@ -246,10 +245,10 @@ mod tests {
     #[test]
     fn should_insert_item_when_sparse_index_is_high() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        paged_sparse_set
+        target
             .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x12)
             .unwrap();
 
@@ -257,17 +256,17 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(11)));
+        assert_that!(target.sparse_pages, len(eq(11)));
         for i in 0..10 {
             assert_that!(
-                paged_sparse_set.sparse_pages[i]
+                target.sparse_pages[i]
                     .as_ref()
                     .map(|sparse_page_option| sparse_page_option.as_ref()),
                 none(),
             );
         }
         assert_that!(
-            paged_sparse_set.sparse_pages[10]
+            target.sparse_pages[10]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -275,7 +274,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x12))]
         );
     }
@@ -283,13 +282,13 @@ mod tests {
     #[test]
     fn should_insert_item_when_sparse_index_is_high_and_same_page_already_contains_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target
             .insert(PAGE_SIZE_FOR_TESTS as u32 * 10 + 1, 0x12)
             .unwrap();
 
         // Execute
-        paged_sparse_set
+        target
             .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34)
             .unwrap();
 
@@ -298,17 +297,17 @@ mod tests {
         expected_indices[0] = Some(1);
         expected_indices[1] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(11)));
+        assert_that!(target.sparse_pages, len(eq(11)));
         for i in 0..10 {
             assert_that!(
-                paged_sparse_set.sparse_pages[i]
+                target.sparse_pages[i]
                     .as_ref()
                     .map(|sparse_page_option| sparse_page_option.as_ref()),
                 none(),
             );
         }
         assert_that!(
-            paged_sparse_set.sparse_pages[10]
+            target.sparse_pages[10]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -316,7 +315,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![
                 eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10 + 1, 0x12)),
                 eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34))
@@ -327,11 +326,11 @@ mod tests {
     #[test]
     fn should_insert_item_when_sparse_index_is_high_and_different_page_already_contains_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(2048, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(2048, 0x12).unwrap();
 
         // Execute
-        paged_sparse_set
+        target
             .insert(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34)
             .unwrap();
 
@@ -342,17 +341,17 @@ mod tests {
         let mut expected_indices_2 = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices_2[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(11)));
+        assert_that!(target.sparse_pages, len(eq(11)));
         for i in 0..2 {
             assert_that!(
-                paged_sparse_set.sparse_pages[i]
+                target.sparse_pages[i]
                     .as_ref()
                     .map(|sparse_page_option| sparse_page_option.as_ref()),
                 none(),
             );
         }
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -361,14 +360,14 @@ mod tests {
         );
         for i in 3..10 {
             assert_that!(
-                paged_sparse_set.sparse_pages[i]
+                target.sparse_pages[i]
                     .as_ref()
                     .map(|sparse_page_option| sparse_page_option.as_ref()),
                 none(),
             );
         }
         assert_that!(
-            paged_sparse_set.sparse_pages[10]
+            target.sparse_pages[10]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -376,19 +375,22 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
-            elements_are![eq(&(2048, 0x12)), eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34))]
+            target.dense,
+            elements_are![
+                eq(&(2048, 0x12)),
+                eq(&(PAGE_SIZE_FOR_TESTS as u32 * 10, 0x34))
+            ]
         );
     }
 
     #[test]
     fn should_return_slot_full_when_inserting_item_and_slot_is_already_filled() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
 
         // Execute
-        let result = paged_sparse_set.insert(0, 0x34);
+        let result = target.insert(0, 0x34);
 
         // Assert
         assert_that!(
@@ -403,16 +405,16 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(0, 0x12))]);
+        assert_that!(target.dense, elements_are![eq(&(0, 0x12))]);
     }
 
     // Removal
@@ -420,36 +422,36 @@ mod tests {
     #[test]
     fn should_remove_item_when_there_is_only_one_item() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
 
         // Execute
-        let result = paged_sparse_set.remove(0);
+        let result = target.remove(0);
 
         // Assert
         assert_that!(result, some(eq(0x12)));
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: each(none()),
             })),
         );
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     #[test]
     fn should_remove_item_when_there_are_multiple_items_in_the_same_page() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(1, 0x34).unwrap();
 
         // Execute
-        let result = paged_sparse_set.remove(0);
+        let result = target.remove(0);
 
         // Assert
         assert_that!(result, some(eq(0x12)));
@@ -457,27 +459,27 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[1] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(1, 0x34))]);
+        assert_that!(target.dense, elements_are![eq(&(1, 0x34))]);
     }
 
     #[test]
     fn should_remove_item_when_there_are_multiple_items_in_different_pages() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(2048, 0x34).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(2048, 0x34).unwrap();
 
         // Execute
-        let result = paged_sparse_set.remove(0);
+        let result = target.remove(0);
 
         // Assert
         assert_that!(result, some(eq(0x12)));
@@ -485,9 +487,9 @@ mod tests {
         let mut expected_indices_2 = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices_2[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(3)));
+        assert_that!(target.sparse_pages, len(eq(3)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -495,32 +497,32 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[1]
+            target.sparse_pages[1]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             none(),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices_2),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(2048, 0x34))]);
+        assert_that!(target.dense, elements_are![eq(&(2048, 0x34))]);
     }
 
     #[test]
     fn should_remove_item_and_swap_last_item_in_when_there_are_multiple_items_in_the_same_page() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(2, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.remove(0);
+        let result = target.remove(0);
 
         // Assert
         assert_that!(result, some(eq(0x12)));
@@ -529,9 +531,9 @@ mod tests {
         expected_indices[1] = Some(1);
         expected_indices[2] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -539,7 +541,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]
         );
     }
@@ -547,13 +549,13 @@ mod tests {
     #[test]
     fn should_remove_item_and_swap_last_item_in_when_there_are_multiple_items_in_different_pages() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(2048, 0x12).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(2048, 0x12).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(2, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.remove(2048);
+        let result = target.remove(2048);
 
         // Assert
         assert_that!(result, some(eq(0x12)));
@@ -562,9 +564,9 @@ mod tests {
         expected_indices_0[1] = Some(1);
         expected_indices_0[2] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(3)));
+        assert_that!(target.sparse_pages, len(eq(3)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -572,13 +574,13 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[1]
+            target.sparse_pages[1]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             none(),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -586,7 +588,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(2, 0x56)), eq(&(1, 0x34))]
         );
     }
@@ -594,19 +596,16 @@ mod tests {
     #[test]
     fn should_return_none_when_deleting_item_and_slot_is_already_empty() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let result = paged_sparse_set.remove(0);
+        let result = target.remove(0);
 
         // Assert
-        assert_that!(
-            result,
-            none(),
-        );
+        assert_that!(result, none(),);
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     // Reference retrieval
@@ -614,11 +613,11 @@ mod tests {
     #[test]
     fn should_get_item_when_there_is_only_one_item() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get(0);
+        let result = target.get(0);
 
         // Assert
         assert_that!(result, some(points_to(eq(0x12))),);
@@ -626,27 +625,27 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(0, 0x12))]);
+        assert_that!(target.dense, elements_are![eq(&(0, 0x12))]);
     }
 
     #[test]
     fn should_get_item_when_there_is_multiple_items_in_the_same_page() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(2, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get(0);
+        let result = target.get(0);
 
         // Assert
         assert_that!(result, some(points_to(eq(0x12))),);
@@ -655,9 +654,9 @@ mod tests {
         expected_indices[0] = Some(0);
         expected_indices[2] = Some(1);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -665,7 +664,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(0, 0x12)), eq(&(2, 0x56))]
         );
     }
@@ -673,12 +672,12 @@ mod tests {
     #[test]
     fn should_get_item_when_there_is_multiple_items_in_different_pages() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(2048, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(2048, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get(0);
+        let result = target.get(0);
 
         // Assert
         assert_that!(result, some(points_to(eq(0x12))),);
@@ -689,9 +688,9 @@ mod tests {
         let mut expected_indices_2 = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices_2[0] = Some(1);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(3)));
+        assert_that!(target.sparse_pages, len(eq(3)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -699,13 +698,13 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[1]
+            target.sparse_pages[1]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             none(),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -713,7 +712,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(0, 0x12)), eq(&(2048, 0x56))]
         );
     }
@@ -721,16 +720,16 @@ mod tests {
     #[test]
     fn should_return_none_when_getting_item_and_slot_is_empty() {
         // Setup
-        let paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let result = paged_sparse_set.get(0);
+        let result = target.get(0);
 
         // Assert
         assert_that!(result, none(),);
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     // Mutable reference retrieval
@@ -738,11 +737,11 @@ mod tests {
     #[test]
     fn should_get_mutable_item_when_there_is_only_one_item() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get_mut(0).unwrap();
+        let result = target.get_mut(0).unwrap();
         *result = 0x34;
 
         // Assert
@@ -751,27 +750,27 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(0, 0x34))]);
+        assert_that!(target.dense, elements_are![eq(&(0, 0x34))]);
     }
 
     #[test]
     fn should_get_mutable_item_when_there_is_multiple_items_in_the_same_page() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(2, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get_mut(0).unwrap();
+        let result = target.get_mut(0).unwrap();
         *result = 0x34;
 
         // Assert
@@ -781,9 +780,9 @@ mod tests {
         expected_indices[0] = Some(0);
         expected_indices[2] = Some(1);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -791,7 +790,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(0, 0x34)), eq(&(2, 0x56))]
         );
     }
@@ -799,12 +798,12 @@ mod tests {
     #[test]
     fn should_get_mutable_item_when_there_is_multiple_items_in_different_pages() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(2048, 0x56).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(2048, 0x56).unwrap();
 
         // Execute
-        let result = paged_sparse_set.get_mut(0).unwrap();
+        let result = target.get_mut(0).unwrap();
         *result = 0x34;
 
         // Assert
@@ -816,9 +815,9 @@ mod tests {
         let mut expected_indices_2 = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices_2[0] = Some(1);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(3)));
+        assert_that!(target.sparse_pages, len(eq(3)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -826,13 +825,13 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[1]
+            target.sparse_pages[1]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             none(),
         );
         assert_that!(
-            paged_sparse_set.sparse_pages[2]
+            target.sparse_pages[2]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -840,7 +839,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![eq(&(0, 0x34)), eq(&(2048, 0x56))]
         );
     }
@@ -848,16 +847,16 @@ mod tests {
     #[test]
     fn should_return_none_when_getting_mutable_item_and_slot_is_empty() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let result = paged_sparse_set.get_mut(0);
+        let result = target.get_mut(0);
 
         // Assert
         assert_that!(result, none(),);
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     // Contains check
@@ -865,26 +864,26 @@ mod tests {
     #[test]
     fn should_return_false_when_contains_called_and_slot_is_empty() {
         // Setup
-        let paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let result = paged_sparse_set.contains(0);
+        let result = target.contains(0);
 
         // Assert
         assert_that!(result, eq(false));
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     #[test]
     fn should_return_true_when_contains_called_and_slot_is_filled() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
 
         // Execute
-        let result = paged_sparse_set.contains(0);
+        let result = target.contains(0);
 
         // Assert
         assert_that!(result, eq(true));
@@ -892,16 +891,16 @@ mod tests {
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(0);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
                 indices: eq(&expected_indices),
             })),
         );
-        assert_that!(paged_sparse_set.dense, elements_are![eq(&(0, 0x12))]);
+        assert_that!(target.dense, elements_are![eq(&(0, 0x12))]);
     }
 
     // Iteration
@@ -909,30 +908,30 @@ mod tests {
     #[test]
     fn should_iterate_over_dense_entries_when_there_is_no_items() {
         // Setup
-        let paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let mut result = paged_sparse_set.iter();
+        let mut result = target.iter();
 
         // Assert
         assert_that!(result.next(), none());
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     #[test]
     fn should_iterate_over_dense_entries_when_there_is_many_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
-        paged_sparse_set.insert(3, 0x78).unwrap();
-        paged_sparse_set.insert(4, 0x90).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(2, 0x56).unwrap();
+        target.insert(3, 0x78).unwrap();
+        target.insert(4, 0x90).unwrap();
 
         // Execute
-        let mut result = paged_sparse_set.iter();
+        let mut result = target.iter();
 
         // Assert
         assert_that!(result.next(), some(eq((0, &0x12))));
@@ -948,9 +947,9 @@ mod tests {
         expected_indices[3] = Some(3);
         expected_indices[4] = Some(4);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -958,7 +957,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![
                 eq(&(0, 0x12)),
                 eq(&(1, 0x34)),
@@ -972,19 +971,19 @@ mod tests {
     #[test]
     fn should_iterate_over_dense_entries_when_there_is_many_items_and_complex_state() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(6, 0xff).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(4, 0x90).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(3, 0x78).unwrap();
-        paged_sparse_set.insert(5, 0xff).unwrap();
-        paged_sparse_set.remove(6).unwrap();
-        paged_sparse_set.remove(5).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(6, 0xff).unwrap();
+        target.insert(2, 0x56).unwrap();
+        target.insert(0, 0x12).unwrap();
+        target.insert(4, 0x90).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(3, 0x78).unwrap();
+        target.insert(5, 0xff).unwrap();
+        target.remove(6).unwrap();
+        target.remove(5).unwrap();
 
         // Execute
-        let mut result = paged_sparse_set.iter();
+        let mut result = target.iter();
 
         // Assert
         assert_that!(result.next(), some(eq((3, &0x78))));
@@ -1000,9 +999,9 @@ mod tests {
         expected_indices[3] = Some(0);
         expected_indices[4] = Some(3);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -1010,7 +1009,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![
                 eq(&(3, 0x78)),
                 eq(&(2, 0x56)),
@@ -1026,32 +1025,32 @@ mod tests {
     #[test]
     fn should_mutably_iterate_over_dense_entries_when_there_is_no_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
 
         // Execute
-        let mut result = paged_sparse_set.iter_mut();
+        let mut result = target.iter_mut();
 
         // Assert
         assert_that!(result.next(), none());
 
         drop(result);
 
-        assert_that!(paged_sparse_set.sparse_pages, is_empty());
-        assert_that!(paged_sparse_set.dense, is_empty());
+        assert_that!(target.sparse_pages, is_empty());
+        assert_that!(target.dense, is_empty());
     }
 
     #[test]
     fn should_mutably_iterate_over_dense_entries_when_there_is_many_items() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
-        paged_sparse_set.insert(3, 0x78).unwrap();
-        paged_sparse_set.insert(4, 0x90).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(0, 0x12).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(2, 0x56).unwrap();
+        target.insert(3, 0x78).unwrap();
+        target.insert(4, 0x90).unwrap();
 
         // Execute
-        let mut result = paged_sparse_set.iter_mut();
+        let mut result = target.iter_mut();
         *result.next().unwrap().1 = 0xff;
         *result.next().unwrap().1 = 0xff;
         *result.next().unwrap().1 = 0xff;
@@ -1068,9 +1067,9 @@ mod tests {
         expected_indices[3] = Some(3);
         expected_indices[4] = Some(4);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -1078,7 +1077,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![
                 eq(&(0, 0xff)),
                 eq(&(1, 0xff)),
@@ -1092,19 +1091,19 @@ mod tests {
     #[test]
     fn should_mutably_iterate_over_dense_entries_when_there_is_many_items_and_complex_state() {
         // Setup
-        let mut paged_sparse_set = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
-        paged_sparse_set.insert(6, 0xff).unwrap();
-        paged_sparse_set.insert(2, 0x56).unwrap();
-        paged_sparse_set.insert(0, 0x12).unwrap();
-        paged_sparse_set.insert(4, 0x90).unwrap();
-        paged_sparse_set.insert(1, 0x34).unwrap();
-        paged_sparse_set.insert(3, 0x78).unwrap();
-        paged_sparse_set.insert(5, 0xff).unwrap();
-        paged_sparse_set.remove(6).unwrap();
-        paged_sparse_set.remove(5).unwrap();
+        let mut target = PagedSparseSet::<PAGE_SIZE_FOR_TESTS, u8>::new();
+        target.insert(6, 0xff).unwrap();
+        target.insert(2, 0x56).unwrap();
+        target.insert(0, 0x12).unwrap();
+        target.insert(4, 0x90).unwrap();
+        target.insert(1, 0x34).unwrap();
+        target.insert(3, 0x78).unwrap();
+        target.insert(5, 0xff).unwrap();
+        target.remove(6).unwrap();
+        target.remove(5).unwrap();
 
         // Execute
-        let mut result = paged_sparse_set.iter_mut();
+        let mut result = target.iter_mut();
         *result.next().unwrap().1 = 0xff;
         *result.next().unwrap().1 = 0xff;
         *result.next().unwrap().1 = 0xff;
@@ -1114,7 +1113,6 @@ mod tests {
         drop(result);
 
         // Assert
-
         let mut expected_indices = [None; PAGE_SIZE_FOR_TESTS];
         expected_indices[0] = Some(2);
         expected_indices[1] = Some(4);
@@ -1122,9 +1120,9 @@ mod tests {
         expected_indices[3] = Some(0);
         expected_indices[4] = Some(3);
 
-        assert_that!(paged_sparse_set.sparse_pages, len(eq(1)));
+        assert_that!(target.sparse_pages, len(eq(1)));
         assert_that!(
-            paged_sparse_set.sparse_pages[0]
+            target.sparse_pages[0]
                 .as_ref()
                 .map(|sparse_page_option| sparse_page_option.as_ref()),
             some(matches_pattern!(SparseSetPage::<PAGE_SIZE_FOR_TESTS> {
@@ -1132,7 +1130,7 @@ mod tests {
             })),
         );
         assert_that!(
-            paged_sparse_set.dense,
+            target.dense,
             elements_are![
                 eq(&(3, 0xff)),
                 eq(&(2, 0xff)),
